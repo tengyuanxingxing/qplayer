@@ -18,7 +18,7 @@ android {
         targetSdk = 34
         versionCode = 116
         versionName = "1.9.17-custom"
-        manifestPlaceholders["appLabel"] = "QPlayer"
+        manifestPlaceholders["appLabel"] = "QPlayer 正式版"
     }
 
     compileOptions {
@@ -58,8 +58,7 @@ android {
             // key for in-place updates, but ship without ART's debugging overhead.
             isDebuggable = false
             applicationIdSuffix = ".debug"
-            versionNameSuffix = "-debug"
-            manifestPlaceholders["appLabel"] = "QPlayer (debug)"
+            manifestPlaceholders["appLabel"] = "QPlayer 正式版"
         }
         // Release-speed binary with a side-by-side id, signed by the debug
         // keystore so a local machine without QPLAYER_KEYSTORE can still
