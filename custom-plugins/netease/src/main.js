@@ -617,6 +617,26 @@ function playlistDto(value) {
   };
 }
 
+// NetEase v1/album returns cd (disc) and no (track) when the release
+// has a published sequence. Never use IDs/titles as a substitute for it.
+// An incomplete sequence retains the complete original response order.
+function albumTrackOrder(songs) {
+  var rows = (songs || []).slice();
+  function positiveIndex(value) {
+    var text = String(value == null ? "" : value).trim();
+    return /^[0-9]+$/.test(text) && Number(text) > 0 && Number(text) <= 100000
+      ? Number(text) : 0;
+  }
+  var anyDisc = rows.some(function (song) { return song.cd != null && String(song.cd).trim() !== ""; });
+  var indexed = rows.map(function (song, index) {
+    return {song: song, index: index, disc: anyDisc ? positiveIndex(song.cd) : 1,
+      track: positiveIndex(song.no)};
+  });
+  if (indexed.some(function (row) { return !row.disc || !row.track; })) return rows;
+  indexed.sort(function (a, b) { return a.disc - b.disc || a.track - b.track || a.index - b.index; });
+  return indexed.map(function (row) { return row.song; });
+}
+
 function albumDto(value, songs) {
   value = value || {};
   var artists = value.artists || (value.artist ? [value.artist] : []);
@@ -624,12 +644,17 @@ function albumDto(value, songs) {
     id: String(value.id || ""), name: value.name || "",
     artworkUrl: secureUrl(value.picUrl || value.blurPicUrl || ""),
     artworkThumbUrl: thumbUrl(value.picUrl || value.blurPicUrl || "", 300),
-    publishTimeMs: Number(value.publishTime || 0), releaseType: value.type || value.subType || "", description: value.description || "",
+    publishTimeMs: Number(value.publishTime || 0),
+    releaseType: value.type || value.subType || "",
+    releaseTypeLabel: value.subType || value.type || "",
+    company: typeof value.company === "string" ? value.company : "",
+    description: typeof value.description === "string" && value.description
+      ? value.description : (typeof value.briefDesc === "string" ? value.briefDesc : ""),
     trackCount: Number(value.size || value.trackCount || (songs || []).length),
     artists: artists.map(function (artist) {
       return {id: String(artist.id), name: artist.name || ""};
     }),
-    songs: (songs || []).map(songDto)
+    songs: albumTrackOrder(songs).map(songDto)
   };
 }
 

@@ -41,6 +41,24 @@ public final class PluginProviderServiceTest {
         assertEquals("100",qq.nextCursor);
     }
 
+    @Test public void albumMetadataKeepsProviderCategoryAndOriginalTrackOrder() throws Exception {
+        Map<String,Object> raw = named("a1", "Album");
+        raw.put("company", "RCA Records China");
+        raw.put("releaseType", "专辑");
+        raw.put("releaseTypeLabel", "录音室版");
+        raw.put("description", "第一段\n第二段");
+        raw.put("songs", java.util.Arrays.asList(song("99", "Intro"), song("2", "Second")));
+        Method parse = PluginProviderService.class.getDeclaredMethod("parseAlbum",String.class,Map.class);
+        parse.setAccessible(true);
+        dev.t1m3.qplayer.media.Album album = (dev.t1m3.qplayer.media.Album) parse.invoke(new PluginProviderService(null,null),"qq",raw);
+        assertEquals("RCA Records China", album.company);
+        assertEquals("录音室版", album.releaseTypeLabel);
+        assertEquals("album", album.releaseType);
+        assertEquals("第一段\n第二段", album.description);
+        assertEquals("qq:song:99", album.songs.get(0).id);
+        assertEquals("qq:song:2", album.songs.get(1).id);
+    }
+
     private static Map<String, Object> named(String id, String name) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("id", id);

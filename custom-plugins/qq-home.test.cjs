@@ -2,15 +2,16 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 
-function plugin(respond,identity={code:0,data:{info:{uin:'123'}}}) {
+function plugin(respond,identity={code:0,data:{info:{uin:'123'}}},cookies={musicid:'123',musickey:'fixture-key',tmeLoginType:2}) {
   const requests=[];
   const context=vm.createContext({module:{exports:{}},require:()=>({qrcDecrypt:()=>''}),qplayer:{call:async(method,args)=>{
-    if(method==='credentials.get')return JSON.stringify(args.key==='cookies'?{musicid:'123',musickey:'fixture-key',tmeLoginType:2}:{});
+    if(method==='credentials.get')return JSON.stringify(args.key==='cookies'?cookies:{});
     if(method==='storage.get')return null;
     if(method==='storage.put')return true;
     if(method==='http.request'){
+      if(args.method==='GET')return {status:200,body:JSON.stringify(await respond({webIdentity:true,request:args}))};
       const body=JSON.parse(args.body);requests.push(body);
-      if(body.identity)return {status:200,body:JSON.stringify({identity})};
+      if(body.identity)return {status:200,body:JSON.stringify(typeof identity==='function'?await identity(body):{identity})};
       assert.match(args.headers.Cookie,/musickey=fixture-key/);
       assert.equal(body.comm.uin,'123');assert.equal(body.comm.authst,'fixture-key');assert.equal(body.comm.tmeLoginType,2);
       return {status:200,body:JSON.stringify(await respond(body))};
@@ -137,8 +138,76 @@ test('QQ authorization preserves the encrypted account id required by album coll
 test('invalid or mismatched account cannot silently become anonymous recommendations',async()=>{
  for(const identity of [{code:1000},{code:0,data:{info:{uin:'999'}}},{code:0,data:{info:{nick:'No identity'}}},{code:0,data:{info:{uin:'0'}}}]){
   let radio=0;const p=plugin(body=>{if(body.guess)radio++;return {};},identity);
-  await assert.rejects(p.home({}),/登录态未验证|账号不一致|可核验的账号/);assert.equal(radio,0);
+  const home=await p.home({});assert.equal(home.songs.length,0);assert.match(home.recommendationStatus,/未通过|账号不一致/);assert.equal(radio,0);
  }
+});
+
+test('Web login verifies its self homepage when the eas_sid-dependent nickname endpoint is unavailable',async()=>{
+ let self=0,radio=0;
+ const p=plugin(body=>{
+  if(body.webIdentity){self++;assert.match(body.request.url,/hostUin=0/);assert.match(body.request.headers.Cookie,/musickey=fixture-key/);return {code:0,data:{profile:{uin:'123',nick:'fixture'}}};}
+  if(body.guess){radio++;return {guess:{data:{tracks:[{mid:'verified',title:'real'}]}}};}
+  throw Error('no daily');
+ },{code:1000});
+ const home=await p.home({});assert.equal(self,1);assert.ok(radio>0);assert.equal(home.songs[0].id,'verified');
+ assert.equal(p.requests[0].comm.ct,24);assert.equal(p.requests[0].nativeIdentity.method,'GetUserInfo');
+});
+
+test('native self identity can be at the data root rather than the nickname info envelope',async()=>{
+ const p=plugin(body=>body.guess?{guess:{data:{tracks:[{mid:'native',title:'real'}]}}}:{daily:{code:1000}},
+  ()=>({identity:{code:1000},nativeIdentity:{code:0,data:{str_musicid:'123',nick:'fixture'}}}));
+ const h=await p.home({});assert.equal(h.songs[0].id,'native');
+});
+
+test('mismatched self homepage and public-looking nickname-only data cannot enable radio',async()=>{
+ for(const profile of [{uin:'999'},{nick:'public looking profile'}]){
+  let radio=0;const p=plugin(body=>{if(body.webIdentity)return {code:0,data:{profile}};if(body.guess)radio++;return {};},{code:1000});
+  const h=await p.home({});assert.equal(h.songs.length,0);assert.equal(radio,0);assert.match(h.recommendationStatus,/未通过|不一致/);
+ }
+});
+
+test('a stale preferred key is replaced only after another alias verifies the same self identity',async()=>{
+ let verified=false;
+ const p=plugin(body=>{
+  if(body.webIdentity)return {code:1000};
+  if(body.guess){assert.ok(verified);assert.equal(body.comm.authst,'fixture-key');return {guess:{data:{tracks:[{mid:'correct',title:'real'}]}}};}
+  return {daily:{code:1000}};
+ },body=>{
+  if(body.comm.authst==='old-key')return {identity:{code:1000},nativeIdentity:{code:1000}};
+  assert.equal(body.comm.authst,'fixture-key');verified=true;return {nativeIdentity:{code:0,data:{str_musicid:'123'}}};
+ },{musicid:'123',qm_keyst:'old-key',musickey:'fixture-key',tmeLoginType:2});
+ const h=await p.home({});assert.equal(h.songs[0].id,'correct');assert.equal(p.requests.filter(x=>x.identity).length,2);
+});
+
+test('expired native sessions renew once and must pass self identity verification again',async()=>{
+ for(const outcome of ['valid','stillExpired','mismatched']){
+  let cookies={musicid:'123',musickey:'expired',psrf_qqrefresh_token:'fixture-refresh'},renews=0,radios=0,newChecks=0;
+  const context=vm.createContext({module:{exports:{}},require:()=>({}),qplayer:{call:async(method,args)=>{
+   if(method==='credentials.get')return JSON.stringify(args.key==='cookies'?cookies:{});
+   if(method==='credentials.put'){if(args.key==='cookies')cookies=JSON.parse(args.value);return true;}
+   if(method!=='http.request')throw Error(method);
+   if(args.method==='GET')return {status:200,body:JSON.stringify({code:1000})};
+   const body=JSON.parse(args.body);let response;
+   if(body.req && body.req.method==='Login'){renews++;response={req:{code:0,data:{musicid:123,musickey:'renewed'}}};}
+   else if(body.identity){
+    if(body.comm.authst==='renewed')newChecks++;
+    response=body.comm.authst!=='renewed'||outcome==='stillExpired'?{identity:{code:1000},nativeIdentity:{code:1000}}:
+     {nativeIdentity:{code:0,data:{str_musicid:outcome==='mismatched'?'999':'123'}}};
+   } else if(body.guess){radios++;response={guess:{code:0,data:{tracks:[{mid:'renewed-track',title:'real'}]}}};}
+   else response={daily:{code:0,data:{v_shelf:[]}}};
+   return {status:200,body:JSON.stringify(response)};
+  }}});
+  vm.runInContext(fs.readFileSync(__dirname+'/qqmusic/src/main.js','utf8'),context);
+  const home=await context.home({});assert.equal(renews,1,outcome);assert.equal(newChecks,1,outcome);
+  if(outcome==='valid'){assert.ok(radios>0);assert.equal(home.songs[0].id,'renewed-track');}
+  else {assert.equal(radios,0);assert.equal(home.songs.length,0);}
+ }
+});
+
+test('an explicit self identity mismatch never triggers credential renewal',async()=>{
+ let renews=0;
+ const p=plugin(body=>{if(body.req && body.req.method==='Login')renews++;return {};},{code:0,data:{info:{uin:'999'}}});
+ const result=await p.home({});assert.equal(renews,0);assert.match(result.recommendationStatus,/不一致/);
 });
 test('daily card uses a unique current-day dynamic playlist, not radio substitution',async()=>{
  const now=Math.floor(Date.now()/1000);let id;

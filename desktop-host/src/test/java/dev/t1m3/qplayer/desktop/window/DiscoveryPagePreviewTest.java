@@ -87,6 +87,12 @@ public class DiscoveryPagePreviewTest {
                     player.playbackGenre.set("流行");player.playbackRelatedSongs.set(songs.subList(0,4));
                     assertEquals(0,player.playbackPage.peek().intValue());
                     snapshot(view,player,settings,compositor,"song-info-390",0);
+                    player.artist.set("示例歌手甲 / 示例歌手乙 / 示例歌手丙 / 示例歌手丁 / 示例歌手戊 / 示例歌手己 / 示例歌手庚 / 示例歌手辛");settle(view);
+                    Item artists=view.findByObjectName("playbackInfoArtists"),infoAlbum=view.findByObjectName("playbackInfoAlbum");
+                    assertNotNull(artists);assertNotNull(infoAlbum);
+                    assertEquals(2,((Number)prop(artists,"maximumLineCount").peek()).intValue());
+                    assertTrue("long credits cannot overlap album row",artists.y.peekFloat()+artists.height.peekFloat()<infoAlbum.y.peekFloat());
+                    snapshot(view,player,settings,compositor,"song-info-many-artists-390",0);
                     player.swipePlaybackPage(1);assertEquals(1,player.playbackPage.peek().intValue());
                     player.swipePlaybackPage(1);assertEquals(2,player.playbackPage.peek().intValue());
                     player.lyricsOpen.set(false);settle(view);

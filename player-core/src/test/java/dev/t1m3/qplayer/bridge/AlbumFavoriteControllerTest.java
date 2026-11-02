@@ -75,6 +75,10 @@ public class AlbumFavoriteControllerTest {
         await(()->controller.albumFavoriteSupported.peek() && !controller.albumFavoriteBusy.peek());
         assertFalse(controller.albumFavorite.peek());
         assertEquals("Fixture album",controller.albumName.peek());
+        assertEquals("Fixture Records",controller.albumCompany.peek());
+        assertEquals("Full introduction",controller.albumDescription.peek());
+        assertEquals("录音室版",controller.albumReleaseType.peek());
+        assertEquals("2020-01-02",controller.albumPublishYear.peek());
 
         controller.toggleAlbumFavorite();
         await(()->!controller.albumFavoriteBusy.peek() && controller.albumFavorite.peek());
@@ -165,7 +169,7 @@ public class AlbumFavoriteControllerTest {
         manifest.permissions.add("credentials");
         byte[] json=new Gson().toJson(manifest).getBytes(StandardCharsets.UTF_8);
         byte[] script=("var saved=false,signedOut=false,failure='',hold='',pending=[],writes=0,lastWrite='';"
-            +"function album(){return {id:'a1',name:'Fixture album',songs:[]};}"
+            +"function album(){return {id:'a1',name:'Fixture album',company:'Fixture Records',description:'Full introduction',releaseType:'专辑',releaseTypeLabel:'录音室版',publishTimeMs:1577894400000,songs:[]};}"
             +"module.exports={handlers:{"
             +"account:function(){return signedOut?{loggedIn:false}:{loggedIn:true,id:'offline',displayName:'Fixture user'};},"
             +"login:function(a){if(a.operation==='methods')return [];if(a.operation==='logout')signedOut=true;return true;},"

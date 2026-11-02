@@ -63,6 +63,7 @@ Flickable {
     // Per-row favorite button (SearchPage's unified list). Off by default so
     // every other caller renders unchanged.
     property bool showLikeButton: false
+    property bool showTrackNumbers: false
     property int rowH: 64
     property int activatedIndex: -1
     property int removeIndex: -1
@@ -347,6 +348,7 @@ Flickable {
                 y: view.headerHeight + pooledRow.sourceIndex * view.rowH
                    + (view._dragFrom >= 0 ? reorderShift : 0)
                 rowTitle: view.isLocal ? pooledRow.entry.title : pooledRow.entry.name
+                trackNumber: view.showTrackNumbers ? pooledRow.sourceIndex + 1 : 0
                 rowArtist: pooledRow.entry.artist + (pooledRow.entry.favoriteSources ? " · " + pooledRow.entry.favoriteSources : "")
                 rowArtistId: pooledRow.entry.artistMediaId || pooledRow.entry.artistId || 0
                 rowArtistIdsCsv: pooledRow.entry.artistIdsCsv || ""
@@ -456,6 +458,7 @@ Flickable {
             showDownloadButton: !!player.downloadHelperEnabled && view.songMenu
             highlighted: false
             rowTitle: view._dragRow ? (view.isLocal ? view._dragRow.title : view._dragRow.name) : ""
+            trackNumber: view.showTrackNumbers ? view._dragFrom + 1 : 0
             rowArtist: view._dragRow ? view._dragRow.artist : ""
             coverThumbPath: view._dragRow ? (view._dragRow.coverThumbPath || "") : ""
             tag: view._dragRow ? (view._dragRow.kindLabel || "") : ""

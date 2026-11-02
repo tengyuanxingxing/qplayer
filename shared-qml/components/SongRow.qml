@@ -16,6 +16,8 @@ Rectangle {
 
     property string rowTitle: ""
     property string rowArtist: ""
+    // Optional sequence in this displayed playback order; zero leaves normal rows unchanged.
+    property int trackNumber: 0
     property bool darkSurface: false
     // Id of rowArtist's (first-listed) artist -- 0 for local tracks / unknown,
     // which disables the artist-name tap target below.
@@ -141,12 +143,21 @@ Rectangle {
 
     // Cover sits 4px inside the hover background. Subtract that inset from
     // the outer radius (16 - 4 = 12) so the rounded corners are concentric.
+    Text {
+        objectName: "songRowTrackNumber"
+        x: 12; y: (row.height - implicitHeight) / 2; width: 26
+        visible: row.trackNumber > 0
+        text: row.trackNumber > 0 ? "" + row.trackNumber : ""
+        horizontalAlignment: Text.AlignHCenter
+        font.pixelSize: 14
+        color: row.highlighted ? Theme.color.primary : Theme.color.onSurfaceVariantSummary
+    }
     Item {
         id: leading
         objectName: "songRowLeading"
         readonly property real cornerRadius: Math.max(0, rowBackground.radius - 4)
         // Explicit, for the same reason as the background above.
-        x: 12
+        x: row.trackNumber > 0 ? 44 : 12
         y: (row.height - height) / 2
         width: 48
         height: 48
@@ -270,7 +281,7 @@ Rectangle {
     Text {
         id: titleText
         objectName: "songRowTitle"
-        x: 74
+        x: row.trackNumber > 0 ? 106 : 74
         // Fixed slots, not `height/2 - height`. The reorder floating copy is
         // born visible: false under cachedLayout, so it never gets the measure
         // that would give `height` a real line; subtracting 0 then parks the

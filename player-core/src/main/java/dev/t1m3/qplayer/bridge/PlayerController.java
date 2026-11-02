@@ -753,8 +753,11 @@ public final class PlayerController {
     public final Property<String> albumArtistName = new Property<>("");
     public final Property<Long> albumArtistId = new Property<>(0L);
     public final Property<String> albumArtistMediaId = new Property<>("");
-    /** Release year, pre-formatted ("2019年") so QML doesn't need Date parsing; empty if unknown. */
+    /** Release date, pre-formatted for QML; the legacy property name stays compatible. */
     public final Property<String> albumPublishYear = new Property<>("");
+    public final Property<String> albumCompany = new Property<>("");
+    public final Property<String> albumDescription = new Property<>("");
+    public final Property<String> albumReleaseType = new Property<>("");
     public final Property<Boolean> albumLoading = new Property<>(false);
     public final Property<List<NeteaseSong>> albumTracks = new Property<>(Collections.<NeteaseSong>emptyList());
     public final Property<List<Song>> sourceAlbumTracks =
@@ -8476,11 +8479,11 @@ public final class PlayerController {
         if (generation != qqGuessGeneration.get()) return;
         List<Song> songs = home != null ? home.songs : Collections.<Song>emptyList();
         qqGuessSongs.set(Collections.unmodifiableList(new ArrayList<>(songs)));
-        qqGuessStatus.set(error != null ? "QQ 推荐登录态未验证或请求失败，请登录后刷新"
+        qqGuessStatus.set(error != null ? "QQ 推荐加载失败：" + safeMessage(error)
                 : home != null && !home.recommendationStatus.isEmpty() ? home.recommendationStatus
                 : "QQ 插件未提供可验证的账号推荐，请更新插件");
         qqDailySongs.set(Collections.unmodifiableList(new ArrayList<>(home != null ? home.dailySongs : Collections.<Song>emptyList())));
-        qqDailyStatus.set(error != null ? "QQ 每日30首加载失败，请登录后刷新" : home != null ? home.dailyStatus : "QQ 每日30首暂不可用");
+        qqDailyStatus.set(error != null ? "QQ 每日30首加载失败：" + safeMessage(error) : home != null ? home.dailyStatus : "QQ 每日30首暂不可用");
     }
 
     public void playQqDaily(int index) {
@@ -8868,6 +8871,9 @@ public final class PlayerController {
             albumArtistId.set(0L);
             albumArtistMediaId.set("");
             albumPublishYear.set("");
+            albumCompany.set("");
+            albumDescription.set("");
+            albumReleaseType.set("");
             sourceAlbumTracks.set(Collections.<Song>emptyList());
             pluginProviders
                     .album(id)
@@ -8889,16 +8895,17 @@ public final class PlayerController {
                                                     return;
                                                 }
                                                 albumName.set(album.name);
+                                                albumCompany.set(album.company);
+                                                albumDescription.set(album.description);
+                                                albumReleaseType.set(album.releaseTypeLabel);
                                                 albumCoverPath.set(album.artworkUrl);
                                                 albumArtistName.set(album.artistName);
                                                 albumArtistMediaId.set(album.artistMediaId);
                                                 albumPublishYear.set(
                                                         album.publishTimeMs > 0
                                                                 ? new java.text.SimpleDateFormat(
-                                                                                I18n.tr(
-                                                                                        "album.yearFormat"),
-                                                                                java.util.Locale
-                                                                                        .getDefault())
+                                                                                "yyyy-MM-dd",
+                                                                                java.util.Locale.ROOT)
                                                                         .format(
                                                                                 new java.util.Date(
                                                                                         album.publishTimeMs))

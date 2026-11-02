@@ -87,8 +87,21 @@ function cookieValue(cookies, keys) {
   return "";
 }
 
+var verifiedKeySnapshot="",verifiedKey="";
+function cookieKeySnapshot(cookies) {
+  return JSON.stringify([musicUin(cookies),cookies.qm_keyst || "",cookies.qqmusic_key || "",cookies.musickey || "",cookies.music_key || ""]);
+}
 function musicKey(cookies) {
+  if(verifiedKey && verifiedKeySnapshot===cookieKeySnapshot(cookies))return verifiedKey;
   return cookieValue(cookies, ["qm_keyst", "qqmusic_key", "musickey", "music_key"]);
+}
+function requestCookieHeader(cookies,key) {
+  var normalized={}; Object.keys(cookies).forEach(function(name){normalized[name]=cookies[name];});
+  // Mixed aliases can otherwise make Cookie and comm.authst identify different sessions.
+  ["qm_keyst","qqmusic_key","musickey"].forEach(function(name){normalized[name]=key;});
+  return Object.keys(normalized).filter(function(name){return !!normalized[name];}).map(function(name){
+    return encodeURIComponent(name)+"="+encodeURIComponent(String(normalized[name]));
+  }).join("; ");
 }
 
 function musicUin(cookies) {
@@ -206,11 +219,11 @@ var WRITE_COMM = "write";
 var ANDROID_COMM = { ct: 11, cv: 14090008, v: 14090008, chid: "10003505", tmeAppID: "qqmusic" };
 
 /** musicu.fcg 批量请求;带登录 cookie 时使用真实 uin 与 musickey。 */
-function musicuOnce(entries, override) {
+function musicuOnce(entries, override, candidateKey) {
   return Promise.all([loadCookies(), loadSession()]).then(function (both) {
     var cookies = both[0];
     var session = both[1] || {};
-    var key = musicKey(cookies);
+    var key = candidateKey || musicKey(cookies);
     var uin = key ? musicUin(cookies) : "0";
     var gtkValue = gtk(key);
     var comm = {
@@ -239,11 +252,7 @@ function musicuOnce(entries, override) {
     Object.keys(entries).forEach(function (k) { body[k] = entries[k]; });
     var headers = null;
     if (key) {
-      var parts = [];
-      Object.keys(cookies).forEach(function (name) {
-        if (cookies[name]) parts.push(encodeURIComponent(name) + "=" + encodeURIComponent(String(cookies[name])));
-      });
-      if (parts.length) headers = { "Cookie": parts.join("; ") };
+      headers = { "Cookie": requestCookieHeader(cookies,key) };
     }
     return httpPostJson(MUSICU, body, REF_BASE, headers);
   });
@@ -426,6 +435,8 @@ function albumDto(raw, songs) {
     artworkUrl: secureUrl(photoUrl("T002", raw.pmid || mid)),
     publishTimeMs: publishMs(raw.publishDate),
     releaseType: String(raw.albumType || raw.type || ""),
+    releaseTypeLabel: String(raw.albumType || raw.type || ""),
+    company: typeof raw.company === "string" ? raw.company : String((raw.company || {}).name || ""),
     description: raw.desc || "",
     trackCount: Number(raw.totalNum || (songs || []).length || 0),
     artists: artists,
@@ -636,21 +647,86 @@ function homePlaylists(args) {
   });
 }
 
-/** Verify a session-bound endpoint before accepting radio's anonymous-success fallback. */
-function requirePersonalAccount() {
+/** These values come only from self-session endpoints, never public arbitrary-uin profiles. */
+function matchesSelfIdentity(data,cookies) {
+  var blocks=[data && data.info,data && data.userinfo,data && data.userInfo,
+    data && data.profile,data && data.creator,data],uin=musicUin(cookies),matched=false;
+  blocks.forEach(function(info){
+    if(!info || typeof info!=="object")return;
+    var actual=String(info.str_musicid || info.musicid || info.musicId || info.uin || info.userid || info.userId || "").replace(/^[oO]0*/, "");
+    var encrypted=String(info.encryptUin || info.encrypt_uin || info.euin || "");
+    if(/^[1-9][0-9]*$/.test(actual)) {
+      if(actual!==uin) {var error=new Error("QQ 推荐账号不一致，请重新登录");error.accountMismatch=true;throw error;}
+      matched=true;
+    } else if(encrypted && cookies.euin) {
+      if(encrypted!==String(cookies.euin)) {var error=new Error("QQ 推荐账号不一致，请重新登录");error.accountMismatch=true;throw error;}
+      matched=true;
+    }
+  });
+  return matched;
+}
+function verifyWebSelf(cookies,key) {
+  var uin=musicUin(cookies);
+  // GetLoginUserInfo's eas_sid requirement is not shared by every valid Web login.
+  // The SDK's Web expiry check uses this self-homepage route (hostUin=0).
+  var url="https://c.y.qq.com/rsc/fcgi-bin/fcg_get_profile_homepage.fcg?"+formEncode({
+    g_tk:gtk(key),format:"json",inCharset:"utf-8",outCharset:"utf-8",notice:0,
+    cid:205360838,needNewCode:0,loginUin:uin,hostUin:0,userid:uin,reqfrom:1});
+  return httpRaw("GET",url,{cookie:requestCookieHeader(cookies,key),followRedirects:false}).then(function(response){
+    if(response.status!==200) {var error=new Error("QQ 登录验证暂不可用，请稍后刷新");error.authDetail="网页HTTP "+Number(response.status);throw error;}
+    var body=parseLooseJson(response.body || "{}");
+    if(Number(body.code)!==0 || Number(body.result || 0)!==0 || !matchesSelfIdentity(body.data,cookies)) {
+      var error=new Error("QQ 推荐登录态未验证，请重新登录 QQ 音乐");
+      error.authDetail=Number(body.code)===0?"网页缺少自身份":"网页"+(Number.isFinite(Number(body.code))?Number(body.code):"无响应码");
+      error.authExpired=[301,1000,104400,104401].indexOf(Number(body.code))>=0;
+      throw error;
+    }
+    return uin;
+  });
+}
+/** Verify the actual self-session, accepting both native and Web response envelopes. */
+function requirePersonalAccount(afterRefresh) {
   return loadCookies().then(function(cookies) {
     var uin=musicUin(cookies);
-    if (!musicKey(cookies) || uin==="0") throw new Error("请先登录 QQ 音乐后加载账号推荐");
-    return musicu({identity:{module:"music.UserInfo.userInfoServer",method:"GetLoginUserInfo",param:{}}}, {ct:19,cv:0})
-      .then(function(body) {
-        var node=body.identity || {}, info=(node.data || {}).info;
-        if (Number(body.code || 0)!==0 || Number(node.code)!==0 || !info)
-          throw new Error("QQ 推荐登录态未验证，请重新登录 QQ 音乐");
-        var actual=String(info.musicid || info.uin || info.str_musicid || "").replace(/^[oO]0*/, "");
-        if (!/^[1-9][0-9]*$/.test(actual)) throw new Error("QQ 未返回可核验的账号 ID，请重新登录");
-        if (actual!==uin) throw new Error("QQ 推荐账号不一致，请重新登录");
-        return uin;
+    if (!musicKey(cookies) || !/^[1-9][0-9]*$/.test(uin)) throw new Error("请先登录 QQ 音乐后加载账号推荐");
+    var keys=[],snapshot=cookieKeySnapshot(cookies),expiredKeys=0;
+    [musicKey(cookies),cookies.qm_keyst,cookies.qqmusic_key,cookies.musickey,cookies.music_key].forEach(function(key){if(key && keys.indexOf(String(key))<0)keys.push(String(key));});
+    function tryKey(index) {
+      var key=keys[index],codes=[];
+      // Do not refresh or overwrite stored credentials while probing a stale alias.
+      return musicuOnce({identity:{module:"music.UserInfo.userInfoServer",method:"GetLoginUserInfo",param:{}},
+      nativeIdentity:{module:"QQMusic.UserLoginServer",method:"GetUserInfo",param:{}}},{ct:24,cv:0},key)
+      .then(function(body){
+        var matched=false;
+        codes.push("会话"+(body.identity && Number.isFinite(Number(body.identity.code))?Number(body.identity.code):"无响应码"));
+        codes.push("原生"+(body.nativeIdentity && Number.isFinite(Number(body.nativeIdentity.code))?Number(body.nativeIdentity.code):"无响应码"));
+        if(Number(body.code || 0)===0) [body.identity,body.nativeIdentity].forEach(function(node){
+          if(node && Number(node.code)===0 && matchesSelfIdentity(node.data,cookies))matched=true;
+        });
+        return matched?uin:verifyWebSelf(cookies,key);
+      },function(){codes.push("会话网络失败");return verifyWebSelf(cookies,key);})
+      .then(function(value){verifiedKey=key;verifiedKeySnapshot=snapshot;return value;},function(error){
+        if(error && error.accountMismatch)throw error;
+        if(error && error.authExpired)expiredKeys++;
+        if(index+1<keys.length)return tryKey(index+1);
+        var failed=new Error("QQ 自身份验证未通过，请重新登录后刷新");
+        if(error && error.authDetail)codes.push(error.authDetail);
+        failed.authRefreshEligible=expiredKeys===keys.length;
+        failed.authSummary=codes.join(" / ");throw failed;
       });
+    }
+    return tryKey(0)
+      .then(function(verified){return loadCookies().then(function(current){
+        if(musicUin(current)!==verified || cookieKeySnapshot(current)!==snapshot)throw new Error("QQ 账号已变化，请刷新推荐");
+        return verified;
+      });});
+  }).catch(function(error){
+    if(afterRefresh || !error || error.accountMismatch || !error.authRefreshEligible)throw error;
+    return refreshCredential().then(function(ok){
+      if(!ok)throw error;
+      // A renewed key is never trusted on its own: reload the jar and verify again.
+      return requirePersonalAccount(true);
+    });
   });
 }
 
@@ -704,6 +780,10 @@ function home(args) {
       guessSongs(30).then(function(songs){return {songs:songs,status:songs.length?"QQ 个性电台 · 已验证账号":"QQ 个性电台暂无歌曲"};},function(error){return {songs:[],status:String(error.message || "QQ 个性电台加载失败")};}),
       dailySongs().then(function(songs){return {songs:songs,status:"QQ 每日30首 · 今日账号歌单"};},function(error){return {songs:[],status:String(error.message || "QQ 每日30首加载失败")};})
     ]).then(function(results){return {songs:results[0].songs,recommendationStatus:results[0].status,dailySongs:results[1].songs,dailyStatus:results[1].status,playlists:[]};});
+  },function(error){
+    var message=error && error.accountMismatch?"QQ 推荐账号不一致，请重新登录":"QQ 自身份验证未通过，请重新登录后刷新";
+    if(error && error.authSummary)message+="（"+error.authSummary+"）";
+    return {songs:[],dailySongs:[],recommendationStatus:message,dailyStatus:message,playlists:[]};
   });
 }
 
@@ -1382,21 +1462,59 @@ function albumDetails(args) {
     info: {
       module: "music.musichallAlbum.AlbumInfoServer",
       method: "GetAlbumDetail",
-      param: { albumMid: mid }
+      param: /^[1-9][0-9]*$/.test(mid) ? { albumId: Number(mid) } : { albumMId: mid }
     },
     songs: {
       module: "music.musichallAlbum.AlbumSongList",
       method: "GetAlbumSongList",
-      param: { albumMid: mid, begin: 0, num: 100, order: 1 }
+      param: /^[1-9][0-9]*$/.test(mid) ? { albumId: Number(mid), begin: 0, num: 100 } : { albumMid: mid, begin: 0, num: 100 }
     }
   }).then(function (body) {
-    var basic = (body.info && body.info.data || {}).basicInfo || {};
-    var songData = body.songs && body.songs.data || {};
-    var songs = songsOf(songData.songList, function (row) { return (row || {}).songInfo; });
-    if (!basic.albumMid) basic.albumMid = mid;
-    if (!basic.totalNum) basic.totalNum = songData.totalNum;
-    return albumDto(basic, songs);
+    var info=body.info || {},songNode=body.songs || {};
+    if(Number(body.code || 0)!==0 || Number(info.code || 0)!==0 || Number(songNode.code || 0)!==0 || !info.data || !songNode.data)
+      throw new Error("QQ 专辑加载失败，请稍后重试");
+    var detail=info.data,basic=detail.basicInfo || {},songData=songNode.data;
+    function pageRows(value){return Array.isArray(value)?value.slice():value && typeof value==="object"?[value]:[];}
+    var rows=pageRows(songData.songList),total=Number(songData.totalNum || rows.length),seenPages={};
+    if(total>5000)throw new Error("QQ 专辑超过当前曲目上限");
+    function next() {
+      if(rows.length>=total)return Promise.resolve(rows);
+      var start=rows.length,param=/^[1-9][0-9]*$/.test(mid)?{albumId:Number(mid)}:{albumMid:mid};
+      param.begin=start;param.num=100;
+      return musicu({songs:{module:"music.musichallAlbum.AlbumSongList",method:"GetAlbumSongList",param:param}}).then(function(page){
+        var node=page.songs || {},more=pageRows((node.data || {}).songList);
+        if(Number(page.code || 0)!==0 || Number(node.code || 0)!==0 || !more.length)throw new Error("QQ 专辑曲目未完整返回，请刷新重试");
+        var signature=JSON.stringify(more.map(function(row){return (row.songInfo || row).mid || "";}));
+        if(seenPages[signature])throw new Error("QQ 专辑分页重复，请刷新重试");
+        seenPages[signature]=true;rows=rows.concat(more);return next();
+      });
+    }
+    return next().then(function(all){
+      var songs=songsOf(albumTrackOrder(all),function(row){return row.songInfo || row;});
+      if(!basic.albumMid)basic.albumMid=mid;
+      basic.totalNum=total;basic.company=detail.company || basic.company || "";
+      var album=albumDto(basic,songs);
+      var singers=((detail.singer || {}).singerList || []);
+      if(singers.length)album.artists=artistsOf(singers.map(function(singer){return {id:singer.singerMid || singer.mid,name:singer.singerName || singer.name};}));
+      return album;
+    });
   });
+}
+
+/** Server order/order:1 can both be popularity order; use the explicit disc/track metadata. */
+function albumTrackOrder(rows) {
+  var known=[];
+  function position(row,index) {
+    var song=row.songInfo || row,track=Number(song.index_album);
+    if(!Number.isFinite(track) || track<=0)return null;
+    var disc=Number(song.index_cd);
+    return {row:row,track:track,disc:Number.isFinite(disc)&&disc>=0?disc:0,index:index};
+  }
+  rows.forEach(function(row,index){var p=position(row,index);if(p)known.push(p);});
+  known.sort(function(a,b){return a.disc-b.disc || a.track-b.track || a.index-b.index;});
+  var at=0;
+  // Rows without track metadata retain their original slot and relative order.
+  return rows.map(function(row,index){return position(row,index)?known[at++].row:row;});
 }
 
 function streamFilenames(mid, quality) {

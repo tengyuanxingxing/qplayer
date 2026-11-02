@@ -2,9 +2,9 @@
   "schemaVersion": 1,
   "id": "qq",
   "name": "QQ音乐（定制版）",
-  "version": "0.7.3.8",
+  "version": "0.7.3.9",
   "apiVersion": "1.0",
-  "minHostVersion": "1.9.18-custom",
+  "minHostVersion": "1.9.19-custom",
   "entry": "src/main.js",
   "publisher": "tengyuanxingxing Custom",
   "capabilities": [

@@ -662,7 +662,11 @@ public final class PluginProviderService {
         album.coverUrl = album.artworkUrl;
         album.coverThumbPath = artworkThumb(provider, object, album.artworkUrl);
         album.publishTimeMs = longValue(object.get("publishTimeMs"), 0L);
-        album.releaseType = dev.t1m3.qplayer.media.AlbumCategory.of(boundedString(object.get("releaseType"), 128, "album release type", false), album.name);
+        String releaseType = boundedString(object.get("releaseType"), 128, "album release type", false);
+        album.releaseTypeLabel = boundedString(object.get("releaseTypeLabel"), 128, "album release type label", false);
+        if (album.releaseTypeLabel.isEmpty()) album.releaseTypeLabel = releaseType;
+        album.releaseType = dev.t1m3.qplayer.media.AlbumCategory.of(releaseType, album.name);
+        album.company = boundedString(object.get("company"), MAX_LABEL_CHARS, "album company", false);
         album.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "album.description", false);
         album.trackCount = (int) boundedLong(object.get("trackCount"), 0L,

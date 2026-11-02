@@ -95,6 +95,7 @@ public class SettingsPlayerPreviewTest {
                     frame(view,player,settings,compositor,"favorites-songs-390");
                     Item tabs=view.findByObjectName("favoritesContentTabs");assertNotNull(tabs);assertTrue(tabs.visible.peek());
                     Item detail=view.findByObjectName("playlistDetailPage");
+                    assertFalse("normal favorites rows keep their original layout",(Boolean)prop(view.findByObjectName("playlistDetailTracks"),"showTrackNumbers").peek());
                     assertEquals(0,((Number)prop(view.findByObjectName("playlistDetailTracks"),"headerHeight").peek()).intValue());
                     Map<String,Object> pos=view.root().mapFromItem(tabs,tabs.width.peekFloat()*0.75f,tabs.height.peekFloat()/2);
                     float tx=((Number)pos.get("x")).floatValue(),ty=((Number)pos.get("y")).floatValue();
@@ -134,10 +135,20 @@ public class SettingsPlayerPreviewTest {
                     frame(view,player,settings,compositor,"update-menu-live-390");
                     player.backTick.set(player.backTick.peek()+1);settle(view);
                     player.openSourceAlbumId.set("qq:album:fixture");player.albumName.set("生活麻辣烫 · 预览");player.albumArtistName.set("示例音乐人");player.albumCoverPath.set(art.toString());player.sourceAlbumTracks.set(songs);player.albumLoading.set(false);
+                    player.albumCompany.set("示例唱片 · 预览数据");player.albumDescription.set("这是一张用于界面验证的专辑。\n简介应完整展示并允许滚动阅读。");player.albumReleaseType.set("录音室专辑");player.albumPublishYear.set("2026-11-03");
                     player.pageNavigationTarget.set("album");player.pageNavigationEntityId.set("qq:album:fixture");player.pageNavigationRevision.set(player.pageNavigationRevision.peek()+1);settle(view);
                     frame(view,player,settings,compositor,"album-detail-390");
                     assertNotNull(view.findByObjectName("albumFavoriteAction"));
-                    Item albumTracks=view.findByObjectName("albumDetailTracks");prop(albumTracks,"contentY").set(270f);settle(view);
+                    Item albumTracks=view.findByObjectName("albumDetailTracks");
+                    assertTrue("album sequence numbers are enabled",(Boolean)prop(albumTracks,"showTrackNumbers").peek());
+                    assertTrue("visible album rows have their actual playback number",assertTrackNumbers(albumTracks)>3);
+                    click(view,view.findByObjectName("albumDetailsAction"));settle(view);
+                    assertTrue("album details opens from its action",(Boolean)prop(view.findByObjectName("albumDetailsDialog"),"opened").peek());
+                    assertTrue(prop(view.findByObjectName("albumDetailsMetadata"),"text").peek().toString().contains("示例唱片"));
+                    frame(view,player,settings,compositor,"album-details-metadata-390");
+                    player.backTick.set(player.backTick.peek()+1);settle(view);
+                    prop(albumTracks,"contentY").set(270f);settle(view);
+                    assertTrue("recycled album rows retain actual sequence numbers",assertTrackNumbers(albumTracks)>3);
                     Map<String,Object> heroPosition=view.root().mapFromItem(view.findByObjectName("albumScrollableHero"),0,0);
                     assertTrue("album header scrolls away",((Number)heroPosition.get("y")).floatValue()<0);
                     frame(view,player,settings,compositor,"album-detail-scrolled-390");
@@ -148,6 +159,7 @@ public class SettingsPlayerPreviewTest {
         } finally {compositor.dispose();if(view!=null)view.dispose();if(player!=null)player.shutdownAsync().join();AppDirs.setBase(base);AppDirs.setCacheBase(cache);}
     }
     private static void collectRows(Item node,List<Item> out){if("favoriteAlbumRow".equals(node.objectName.peek()))out.add(node);for(Item child:node.children)collectRows(child,out);}
+    private static int assertTrackNumbers(Item node)throws Exception{int n=0;if("virtualSongRow".equals(node.objectName.peek())){assertEquals(((Number)prop(node,"sourceIndex").peek()).intValue()+1,((Number)prop(node,"trackNumber").peek()).intValue());n++;}for(Item child:node.children)n+=assertTrackNumbers(child);return n;}
     private static Item findVisible(Item node,String name){if(name.equals(node.objectName.peek()) && node.visible.peek())return node;for(Item child:node.children){Item found=findVisible(child,name);if(found!=null)return found;}return null;}
     private static void frame(QmlView view,PlayerController player,SettingsCore settings,LyricCompositor c,String name)throws Exception {
         int w=Math.round(view.root().width.peekFloat()),h=Math.round(view.root().height.peekFloat());

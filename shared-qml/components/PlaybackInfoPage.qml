@@ -36,9 +36,10 @@ Item {
                 width: 60; height: 60; radius: 12; source: player.coverPath
             }
             Text {
+                objectName: "playbackInfoArtists"
                 x: 76; y: art.y + 6; width: parent.width - 76
                 text: "歌手：" + player.artist; color: "#E0EBF1"; font.pixelSize: 17
-                wrapMode: Text.Wrap
+                height: 48; wrapMode: Text.Wrap; maximumLineCount: 2; elide: Text.ElideRight
             }
             MouseArea {
                 x: 0; y: art.y; width: parent.width; height: 64
@@ -46,6 +47,7 @@ Item {
             }
             Text {
                 id: album
+                objectName: "playbackInfoAlbum"
                 y: art.y + 84; width: parent.width
                 text: "专辑：" + (player.playbackAlbumName || "暂无专辑信息") + (player.playbackAlbumId !== "" ? "  ›" : "")
                 color: "#D3E3EE"; font.pixelSize: 17; wrapMode: Text.Wrap
