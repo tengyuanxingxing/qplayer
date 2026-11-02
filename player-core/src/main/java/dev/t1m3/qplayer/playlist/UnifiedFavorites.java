@@ -25,6 +25,7 @@ public final class UnifiedFavorites {
     public static final class Result {
         public final List<Song> songs;
         public Set<String> likedIds;
+        public String accountId="";
         public final boolean stale;
         public final boolean signedIn;
         public Result(List<Song> songs, boolean stale, boolean signedIn) {
@@ -61,29 +62,53 @@ public final class UnifiedFavorites {
             List<String> ordered = new ArrayList<>(ids);
             Map<String, Song> resolved = new LinkedHashMap<>();
             for (Song song : old) if (ids.contains(song.id)) resolved.put(song.id, song);
-            boolean[] partial = {false};
+            Set<String> fresh = new HashSet<>();
             CompletableFuture<Void> chain = CompletableFuture.completedFuture(null);
             for (int i = 0; i < ordered.size(); i += BATCH_SIZE) {
                 final List<String> batch = new ArrayList<>(ordered.subList(i, Math.min(i + BATCH_SIZE, ordered.size())));
-                chain = chain.thenCompose(ignored -> details.apply(batch).handle((songs, error) -> {
-                    if (error != null || songs == null) partial[0] = true;
-                    else for (Song song : songs) if (batch.contains(song.id)) resolved.put(song.id, song);
-                    return null;
-                }));
+                chain = chain.thenCompose(ignored -> resolveBatch(batch, details, resolved, fresh));
             }
             return chain.thenApply(ignored -> {
                 List<Song> rows = new ArrayList<>();
+                boolean partial = false;
                 for (String id : ordered) {
                     Song song = resolved.get(id);
-                    if (song != null) rows.add(song); else partial[0] = true;
+                    if (song != null) rows.add(song);
+                    if (!fresh.contains(id)) partial = true;
                 }
                 // Confirmed removals are applied even if a metadata batch failed.
                 save(key, rows);
-                Result result = new Result(rows, partial[0], true);
+                Result result = new Result(rows, partial, true);
                 result.likedIds = new LinkedHashSet<>(ids);
                 return result;
             });
-        }).exceptionally(error -> new Result(old, true, true));
+        }).exceptionally(error -> new Result(old, true, true)).thenApply(result -> {result.accountId=account.id;return result;});
+    }
+
+    /** Older providers can silently return no data for oversized musicu batches. Retry
+     * only missing ids in small requests; never silently certify a truncated snapshot. */
+    private static CompletableFuture<Void> resolveBatch(List<String> batch,
+            Function<List<String>, CompletableFuture<List<Song>>> details,
+            Map<String,Song> resolved, Set<String> fresh) {
+        CompletableFuture<List<Song>> request;
+        try { request=details.apply(batch); }
+        catch (Exception error) { request=new CompletableFuture<>(); request.completeExceptionally(error); }
+        return request.handle((songs,error)-> {
+            if(songs!=null) for(Song song:songs) if(song!=null && batch.contains(song.id)) {
+                resolved.put(song.id,song);fresh.add(song.id);
+            }
+            return null;
+        }).thenCompose(ignored -> {
+            if(batch.size()<=10) return CompletableFuture.completedFuture(null);
+            List<String> missing=new ArrayList<>();
+            for(String id:batch) if(!fresh.contains(id)) missing.add(id);
+            CompletableFuture<Void> retry=CompletableFuture.completedFuture(null);
+            for(int i=0;i<missing.size();i+=10) {
+                final List<String> small=new ArrayList<>(missing.subList(i,Math.min(i+10,missing.size())));
+                retry=retry.thenCompose(nothing->resolveBatch(small,details,resolved,fresh));
+            }
+            return retry;
+        });
     }
 
     private static Song copy(Song s) {
@@ -121,25 +146,33 @@ public final class UnifiedFavorites {
     }
     public static List<Song> merge(Collection<List<Song>> sources) { return merge(sources, "qq"); }
     /** One queue entry per recording. Keep source snapshots intact for platform filters. */
-    public static List<Song> merge(Collection<List<Song>> sources, String preferred) {
-        Map<String, List<Song>> groups = new LinkedHashMap<>();
-        for (List<Song> rows : sources) for (Song song : rows) {
-            String key = normalized(song.title) + "|" + artistKey(song.artist);
-            List<Song> versions = groups.computeIfAbsent(key, ignored -> new ArrayList<>());
-            int match = -1;
-            for (int i=0; i<versions.size(); i++) if (sameRecording(versions.get(i), song)) { match=i; break; }
-            if (match < 0) { versions.add(copy(song)); continue; }
-            Song prior = versions.get(match);
-            String labels = prior.favoriteSources;
-            if (song.favoriteSources != null && !song.favoriteSources.isEmpty() && !labels.contains(song.favoriteSources))
-                labels += (labels.isEmpty() ? "" : " / ") + song.favoriteSources;
-            if (rank(song, preferred) > rank(prior, preferred)) {
-                prior = copy(song); versions.set(match, prior);
-            }
-            prior.favoriteSources = labels;
-        }
-        List<Song> result = new ArrayList<>();
-        for (List<Song> versions : groups.values()) result.addAll(versions);
-        return result;
+    static final class Group {
+        Song song; final Map<String,Integer> positions=new LinkedHashMap<>();
+        Group(Song song) { this.song=copy(song); }
     }
+    static List<Group> groups(Collection<List<Song>> sources, String preferred) {
+        Map<String,List<Group>> byTitle=new LinkedHashMap<>();List<Group> order=new ArrayList<>();Map<String,Integer> nextPosition=new HashMap<>();
+        for(List<Song> rows:sources) for(Song song:rows) {
+            String key=normalized(song.title)+"|"+artistKey(song.artist);
+            List<Group> versions=byTitle.computeIfAbsent(key,ignored->new ArrayList<>());Group match=null;
+            for(Group version:versions) if(sameRecording(version.song,song)) {match=version;break;}
+            if(match==null) {match=new Group(song);versions.add(match);order.add(match);}
+            else {
+                String labels=match.song.favoriteSources;
+                if(song.favoriteSources!=null && !song.favoriteSources.isEmpty() && !labels.contains(song.favoriteSources))
+                    labels+=(labels.isEmpty()?"":" / ")+song.favoriteSources;
+                if(rank(song,preferred)>rank(match.song,preferred)) match.song=copy(song);
+                match.song.favoriteSources=labels;
+            }
+            int colon=song.id.indexOf(':');
+            String provider=colon>0?song.id.substring(0,colon):"";
+            int index=nextPosition.getOrDefault(provider,0);nextPosition.put(provider,index+1);
+            if(!match.positions.containsKey(provider))match.positions.put(provider,index);
+        }
+        return order;
+    }
+    public static List<Song> merge(Collection<List<Song>> sources, String preferred) {
+        List<Song> result=new ArrayList<>();for(Group group:groups(sources,preferred))result.add(group.song);return result;
+    }
+
 }

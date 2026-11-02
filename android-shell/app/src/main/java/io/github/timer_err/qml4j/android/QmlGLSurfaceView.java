@@ -96,6 +96,8 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private boolean lyCanScroll;
     private boolean lyInfoGesture;
     private boolean lyCoverGesture;
+    private float lyDismissLastY,lyDismissSpeed;
+    private long lyDismissLastNs;
     private boolean lyInfoCanceled;
     private boolean lyPortrait;
     private final dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture pageGesture = new dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture();
@@ -300,7 +302,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         if (disposed) return;
         queueEvent(() -> {
             lyGrab = false; lyMoved = false;
-            if (controller != null) controller.finishPlaybackDrag(0);
+            if (controller != null) {controller.finishPlaybackDrag(0);controller.cancelPlaybackDismiss();}
             compositor.lyricRenderer().scrollCancel();
             if (view != null) view.dispatchPointerCancel();
         });
@@ -378,7 +380,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     private void dispatchTouchEvent(MotionEvent event, int pointerIndex, int action) {
         if (action == MotionEvent.ACTION_CANCEL) {
-            if (controller != null) controller.finishPlaybackDrag(0);
+            if (controller != null) {controller.finishPlaybackDrag(0);controller.cancelPlaybackDismiss();}
             if (lyGrab) {
                 lyGrab = false;
                 if (lyMoved) compositor.lyricRenderer().scrollCancel();
@@ -411,7 +413,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 if (lyInfoGesture) view.dispatchPointerDown(x, y, eventTimeNanos);
                 pageGesture.begin(x, y);
                 lyDownX = x;
-                lyDownY = y;
+                lyDownY = y;lyDismissLastY=y;lyDismissLastNs=eventTimeNanos;lyDismissSpeed=0f;
                 lyDownTimeNanos = eventTimeNanos;
                 lyMoved = false;
                 return;
@@ -437,9 +439,9 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 if (lyPortrait && pageGesture.direction() == 2 && controller != null) {
                     compositor.lyricRenderer().scrollCancel();
                     controller.finishPlaybackDrag(swipe);
-                } else if (lyCoverGesture && controller != null && pageGesture.dismissDown(x, y)) {
+                } else if (lyCoverGesture && controller != null && controller.playbackDismissDragging.peek()) {
                     view.dispatchPointerCancel();
-                    controller.setLyricsOpen(false);
+                    controller.finishPlaybackDismiss(lyDismissSpeed);
                 } else if (lyInfoGesture) {
                     if (!lyInfoCanceled) view.dispatchPointerUp(x, y, eventTimeNanos);
                 } else if (lyMoved) {
@@ -462,6 +464,15 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             int direction = pageGesture.move(x, y);
             if (lyPortrait && direction == 2 && controller != null)
                 controller.updatePlaybackDrag((x - lyDownX) / Math.max(1f, getWidth() / uiScale));
+            if(lyCoverGesture && direction==1 && controller!=null && (y>lyDownY || controller.playbackDismissDragging.peek())) {
+                if(!lyInfoCanceled){view.dispatchPointerCancel();lyInfoCanceled=true;}
+                float height=Math.max(1f,getHeight()/uiScale);
+                if(eventTimeNanos>lyDismissLastNs && y!=lyDismissLastY)
+                    lyDismissSpeed=(y-lyDismissLastY)/((eventTimeNanos-lyDismissLastNs)/1_000_000_000f)/height;
+                controller.updatePlaybackDismiss(Math.max(0f,(y-lyDownY)/height));
+                if(y!=lyDismissLastY){lyDismissLastY=y;lyDismissLastNs=eventTimeNanos;}
+                else if(eventTimeNanos-lyDismissLastNs>120_000_000L)lyDismissSpeed=0f;
+            }
             if (lyInfoGesture) {
                 if (direction == 2 || (lyCoverGesture && direction == 1)) { if (!lyInfoCanceled) view.dispatchPointerCancel(); lyInfoCanceled = true; }
                 else view.dispatchPointerMove(x, y, eventTimeNanos);

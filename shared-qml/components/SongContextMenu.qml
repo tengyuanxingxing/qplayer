@@ -42,6 +42,12 @@ Menu {
         var songId = s.mediaId ? s.mediaId : (s.id !== undefined ? s.id : s.neteaseId)
         if (!songId) { menu.model = items; return }
         if (("" + songId).indexOf(":") >= 0) {
+            var provider=(""+songId).split(":")[0]
+            if(player.openSourcePlaylistId === "qplayer:playlist:unified-favorites" && (provider===player.favoriteMixBase || provider===player.favoriteMixInsert)) {
+                var rangeLabel=provider===player.favoriteMixBase?"主序":"参与"
+                items.push({text:"设为"+rangeLabel+"区段起点",icon:"first_page",action:function(){player.setFavoriteMixBoundary(""+songId,true)}})
+                items.push({text:"设为"+rangeLabel+"区段终点",icon:"last_page",action:function(){player.setFavoriteMixBoundary(""+songId,false)}})
+            }
             var mediaArtistIds = s.artistIdsCsv || s.artistMediaId || ""
             var mediaArtistNames = s.artistNamesCsv || s.artist || ""
             if (mediaArtistIds)

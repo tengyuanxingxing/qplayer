@@ -23,6 +23,7 @@ Item {
     property bool centered: false
     property real fadeWidth: 20
     property bool scrollingEnabled: true
+    readonly property bool activeOverflow: root.overflowing && root.scrollingEnabled
     readonly property bool effectivelyVisible: {
         var item = root
         while (item) {
@@ -93,9 +94,9 @@ Item {
     // The common, zero-offscreen-cost path for text that fits. Emptied rather than
     // only hidden while scrolling, so the two paths can never paint at once.
     Text {
-        visible: !root.overflowing
+        visible: !root.activeOverflow
         anchors.fill: parent
-        text: root.overflowing ? "" : root.text
+        text: root.activeOverflow ? "" : root.text
         color: root.textColor
         font.family: root.fontFamily
         font.pixelSize: root.fontSize
@@ -126,7 +127,7 @@ Item {
             x: scrollX
             anchors.verticalCenter: parent.verticalCenter
             width: loopProbe.implicitWidth
-            text: root.overflowing ? root.loopText : ""
+            text: root.activeOverflow ? root.loopText : ""
             color: root.textColor
             font.family: root.fontFamily
             font.pixelSize: root.fontSize
@@ -192,7 +193,7 @@ Item {
     }
 
     MultiEffect {
-        visible: root.overflowing
+        visible: root.activeOverflow
         x: 0
         y: 0
         width: root.width

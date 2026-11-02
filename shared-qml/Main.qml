@@ -810,6 +810,9 @@ Rectangle {
         id: mini
         z:1000
         enabled:!player.lyricsOpen && player.lyricSlide<=0.001
+        // qml4j does not inherit enabled through every child control. Hide the
+        // capsule under the fully open sheet so its buttons cannot steal toasts.
+        visible:player.lyricSlide<0.999 && player.playbackSheetOffset>0.001
         anchors.left: rail.right
         anchors.right: parent.right
         anchors.leftMargin: app.floatingBottomChrome ? 24 : 12
@@ -847,10 +850,6 @@ Rectangle {
     LyricOverlay {
         id: lyricOverlay
         objectName: "lyricChrome"   // host renders this subtree in its own pass, over the fluid
-        property real transitionEase: {
-            var s = player.lyricSlide
-            return s * s * (3 - 2 * s)
-        }
         x: settings.leftInset
         width: parent.width - settings.leftInset - settings.rightInset
         height: parent.height
@@ -859,7 +858,7 @@ Rectangle {
         // TitleBar below), so the three title buttons sit flush at the very top.
         topPad: hostWindow.available ? 6 : settings.topInset + 6
         onCloseRequested: app.popPage()
-        y: (1 - transitionEase) * height
+        y: player.playbackSheetOffset * height
     }
 
     TemperaLayer { anchors.fill: parent }

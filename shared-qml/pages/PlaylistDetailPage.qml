@@ -197,60 +197,13 @@ Rectangle {
                 objectName: "playlistDetailOverflowButton"
                 Layout.alignment: Qt.AlignVCenter
                 type: "standard"
-                visible: page.compactHeader && page.hasHeaderActions
+                visible: page.unified || (page.compactHeader && page.hasHeaderActions)
                 icon: "more_vert"
                 onClicked: {
                     overflowMenu.rebuild()
                     overflowMenu.open(overflowButton, 0, overflowButton.height)
                 }
             }
-        }
-
-        Text {
-            Layout.fillWidth: true
-            Layout.leftMargin: 20; Layout.rightMargin: 20
-            visible: page.unified
-            text: player.unifiedFavoritesStatus
-            color: Theme.color.onSurfaceVariantSummary
-            font.pixelSize: 12
-            wrapMode: Text.Wrap
-        }
-        RowLayout {
-            Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
-            visible: page.unified
-            Button {
-                text: "全部平台"; onClicked: player.setUnifiedFavoritesSource("")
-            }
-            Button {
-                id: favoriteSourceButton
-                text: {
-                    var accounts = player.sourceAccounts
-                    for (var i = 0; i < accounts.length; i++)
-                        if (accounts[i].providerId === player.unifiedFavoritesSource) return accounts[i].sourceName
-                    return "按平台查看"
-                }
-                onClicked: {
-                    var items = []
-                    var accounts = player.sourceAccounts
-                    for (var i = 0; i < accounts.length; i++) {
-                        var account = accounts[i]
-                        if (account.loggedIn) items.push(sourceMenu.entry(account.providerId, account.sourceName))
-                    }
-                    sourceMenu.model = items
-                    sourceMenu.open(favoriteSourceButton, 0, favoriteSourceButton.height)
-                }
-            }
-            IconButton {
-                icon: "sync"; enabled: !player.unifiedFavoritesSyncing
-                onClicked: player.refreshUnifiedFavorites()
-            }
-        }
-
-        Button {
-            Layout.leftMargin: 16
-            visible: page.unified
-            text: player.favoritePreferredSource === "qq" ? "重复歌曲：QQ 优先" : "重复歌曲：网易云优先"
-            onClicked: player.setFavoritePreferredSource(player.favoritePreferredSource === "qq" ? "netease" : "qq")
         }
 
         Item {
@@ -273,12 +226,15 @@ Rectangle {
 
                         CoverImage {
                             id: playlistCover
+                            objectName: "playlistFirstSongCover"
                             x: 16
                             y: 8
                             width: 128
                             height: 128
                             radius: 20
-                            source: player.playlistCoverPath
+                            source: page.unified && player.sourcePlaylistTracks.length > 0
+                                    ? (player.sourcePlaylistTracks[0].coverThumbPath || player.sourcePlaylistTracks[0].coverUrl || player.sourcePlaylistTracks[0].artworkUrl)
+                                    : player.playlistCoverPath
                             icon: "queue_music"
                         }
 
@@ -464,9 +420,34 @@ Rectangle {
 
     Menu {
         id: overflowMenu
+        objectName: "favoritesOverflowMenu"
         outlined: true
         function rebuild() {
             var items = []
+            if (page.unified) {
+                var platforms = [sourceMenu.entry("", "全部平台")]
+                var accounts = player.sourceAccounts
+                for (var i=0;i<accounts.length;i++) if(accounts[i].loggedIn)
+                    platforms.push(sourceMenu.entry(accounts[i].providerId, accounts[i].sourceName))
+                items.push({text:"按平台查看",icon:"filter_list",subItems:platforms})
+                items.push({text:player.unifiedFavoritesSyncing?"正在同步…":"刷新全部收藏",icon:"sync",
+                    enabled:!player.unifiedFavoritesSyncing,action:function(){player.refreshUnifiedFavorites()}})
+                items.push({text:"同步状态",icon:"info",action:function(){favoriteStatus.open()}})
+                items.push({text:player.favoritePreferredSource==="qq"?"重复歌曲：QQ 优先":"重复歌曲：网易云优先",subItems:[
+                    {text:"QQ 音乐优先",action:function(){player.setFavoritePreferredSource("qq")}},
+                    {text:"网易云优先",action:function(){player.setFavoritePreferredSource("netease")}}]})
+                items.push({text:player.favoriteMixMode==="off"?"分组穿插：关闭":player.favoriteMixMode==="interleave"?"分组穿插："+player.favoriteMixRatio:"分组穿插：分段接续",subItems:[
+                    {text:"关闭，保持主序来源原顺序",action:function(){player.setFavoriteMixMode("off")}},
+                    {text:"按比例穿插两个区段",action:function(){player.setFavoriteMixMode("interleave")}},
+                    {text:"两个区段接在一起",action:function(){player.setFavoriteMixMode("blocks")}},
+                    {text:"主序平台："+page.providerName(player.favoriteMixBase),subItems:page.mixSources("base")},
+                    {text:"参与平台："+page.providerName(player.favoriteMixInsert),subItems:page.mixSources("insert")},
+                    {text:"穿插比例："+player.favoriteMixRatio,action:function(){mixRatioDialog.open()}},
+                    {text:"主序平台整个收藏参与",action:function(){player.setFavoriteMixWhole("base")}},
+                    {text:"参与平台整个收藏参与",action:function(){player.setFavoriteMixWhole("insert")}},
+                    {text:"区段设置与说明",action:function(){mixHelp.open()}}]})
+                items.push({type:"separator"})
+            }
             if (page.canHeart) {
                 items.push({
                     text: i18n.t("playlist.heart"), icon: "auto_awesome",
@@ -510,6 +491,48 @@ Rectangle {
                 })
             }
             overflowMenu.model = items
+        }
+    }
+
+    Dialog {
+        id: favoriteStatus
+        objectName: "favoritesSyncStatusDialog"
+        topInset: settings.topInset; bottomInset: settings.bottomInset
+        title: "收藏同步状态"; text: player.unifiedFavoritesStatus
+        showAcceptButton: false; rejectText: "关闭"
+    }
+    function providerName(id) {
+        var accounts=player.sourceAccounts
+        for(var i=0;i<accounts.length;i++)if(accounts[i].providerId===id)return accounts[i].sourceName
+        return id
+    }
+    function mixSourceEntry(role,id,label) {
+        return {text:label,action:function(){player.setFavoriteMixProvider(role,id)}}
+    }
+    function mixSources(role) {
+        var accounts=player.sourceAccounts,out=[]
+        for(var i=0;i<accounts.length;i++)if(accounts[i].loggedIn && player.canMixFavoritesSource(accounts[i].providerId) && (role==="base" || accounts[i].providerId!==player.favoriteMixBase))
+            out.push(page.mixSourceEntry(role,accounts[i].providerId,accounts[i].sourceName))
+        return out
+    }
+    Dialog {
+        id: mixHelp
+        topInset: settings.topInset; bottomInset: settings.bottomInset
+        title: "分组穿插"
+        text: "主序平台保留前后歌曲的顺序，参与平台提供要穿插的歌曲。先选择两边来源，再按平台查看收藏，长按歌曲设置各自区段的起点、终点。主序只设终点时，从第一首开始；参与平台默认全部。\n\n只在所选区段穿插，主序前后其余歌曲保持先后顺序。未参与穿插的其他歌曲放在后面。重复歌曲只保留一个播放源；设置不会修改平台歌单。\n\n" + player.favoriteMixSummary
+        showAcceptButton: false; rejectText: "关闭"
+    }
+    Dialog {
+        id: mixRatioDialog
+        topInset: settings.topInset; bottomInset: settings.bottomInset
+        title: "每轮各播放几首"; acceptText: "应用"; rejectText: "取消"
+        onOpenedChanged:if(opened){var ratio=player.favoriteMixRatio.split("∶");baseRatio.text=ratio[0];insertRatio.text=ratio[1]}
+        onAccepted: player.setFavoriteMixRatio(parseInt(baseRatio.text)||1,parseInt(insertRatio.text)||1)
+        Column {
+            width:parent.width;spacing:12
+            Text {width:parent.width;text:"填写 1–10。每轮先放主序平台歌曲，再放参与平台歌曲。";wrapMode:Text.Wrap;color:Theme.color.onSurfaceColor;font.pixelSize:14}
+            TextField {id:baseRatio;width:parent.width;placeholderText:"主序平台每轮首数";text:"1"}
+            TextField {id:insertRatio;width:parent.width;placeholderText:"参与平台每轮首数";text:"1"}
         }
     }
 

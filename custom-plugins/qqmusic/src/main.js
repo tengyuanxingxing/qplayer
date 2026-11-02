@@ -552,25 +552,31 @@ function searchArtists(args) {
   });
 }
 
+// 收藏列表已带完整曲目，避免统一收藏再发出上千次歌曲详情请求。
+var favoriteSongDetails = {};
 function songDetails(args) {
-  var mids = (args.ids || []).filter(Boolean);
-  if (!mids.length) return Promise.resolve([]);
-  var entries = {};
-  mids.forEach(function (mid, index) {
-    entries["req_" + index] = {
-      module: "music.pf_song_detail_svr",
-      method: "get_song_detail_yqq",
-      param: { song_mid: mid }
-    };
+  var mids = (args.ids || []).filter(Boolean), resolved = {}, missing = [];
+  mids.forEach(function (mid) {
+    if (favoriteSongDetails[mid]) resolved[mid] = favoriteSongDetails[mid];
+    else missing.push(mid);
   });
-  return musicu(entries).then(function (body) {
-    var out = [];
-    mids.forEach(function (mid, index) {
-      var data = body["req_" + index] && body["req_" + index].data;
-      if (data && data.track_info) out.push(songDto(data.track_info));
-    });
-    return out;
-  });
+  var chain = Promise.resolve();
+  for (var offset=0; offset<missing.length; offset+=10) {
+    (function (batch) {
+      chain=chain.then(function () {
+        var entries={};
+        batch.forEach(function (mid,index) { entries["req_"+index]={
+          module:"music.pf_song_detail_svr",method:"get_song_detail_yqq",param:{song_mid:mid}}; });
+        return musicu(entries).then(function (body) {
+          batch.forEach(function (mid,index) {
+            var data=(body["req_"+index] || {}).data;
+            if(data && data.track_info) resolved[mid]=songDto(data.track_info);
+          });
+        });
+      });
+    })(missing.slice(offset,offset+10));
+  }
+  return chain.then(function () { return mids.map(function(mid){return resolved[mid];}).filter(Boolean); });
 }
 
 /** 歌单广场推荐位。比 get_hot_recommend 多出歌曲数、播放量和收藏状态,但要登录。 */
@@ -701,6 +707,21 @@ function favTids() {
   });
 }
 
+function allDissSongs(tid, first) {
+  var rows=(first.songlist || []).slice();
+  var total=Number((first.dirinfo || {}).songnum || first.total_song_num || rows.length || 0);
+  if(total>MAX_PLAYLIST_SONGS) throw new Error("收藏超过当前可同步上限，请反馈以扩展支持");
+  function next() {
+    if(rows.length>=total) return Promise.resolve(rows);
+    return dissPage(tid,rows.length,Math.min(DISS_PAGE,total-rows.length)).then(function(page){
+      var more=page.songlist || [];
+      if(!more.length) throw new Error("QQ 歌单分页未返回完整内容，请刷新重试");
+      rows=rows.concat(more);return next();
+    });
+  }
+  return next();
+}
+
 function playlistDetails(args) {
   var tid = String(args.id || "");
   if (!tid) throw new Error("缺少歌单 ID");
@@ -708,21 +729,7 @@ function playlistDetails(args) {
     var first = both[0];
     var subscribed = both[1].indexOf(tid) >= 0;
     var dir = first.dirinfo || {};
-    var songs = (first.songlist || []).slice();
-    var total = Math.min(MAX_PLAYLIST_SONGS,
-      Number(dir.songnum || first.total_song_num || songs.length || 0));
-    var offsets = [];
-    for (var begin = songs.length; begin > 0 && begin < total; begin += DISS_PAGE) {
-      offsets.push(begin);
-    }
-    // 顺序续拉:并发对同一个歌单会被限流,而歌单顺序本身也要保持。
-    return offsets.reduce(function (chain, begin) {
-      return chain.then(function () {
-        return dissPage(tid, begin, DISS_PAGE).then(function (page) {
-          songs = songs.concat(page.songlist || []);
-        });
-      });
-    }, Promise.resolve()).then(function () {
+    return allDissSongs(tid,first).then(function (songs) {
       return dirinfoDto(dir, tid, songsOf(songs), subscribed);
     });
   });
@@ -1187,24 +1194,11 @@ function like(args) {
       return favPlaylistTid().then(function (tid) {
         if (!tid) return [];
         return dissPage(tid, 0, DISS_PAGE).then(function (data) {
-          var total = Math.min(MAX_PLAYLIST_SONGS,
-            Number((data.dirinfo || {}).songnum || 0));
-          var songs = (data.songlist || []).slice();
-          var offsets = [];
-          for (var begin = songs.length; begin > 0 && begin < total; begin += DISS_PAGE) {
-            offsets.push(begin);
-          }
-          return offsets.reduce(function (chain, begin) {
-            return chain.then(function () {
-              return dissPage(tid, begin, DISS_PAGE).then(function (page) {
-                songs = songs.concat(page.songlist || []);
-              });
-            });
-          }, Promise.resolve()).then(function () {
-            return songs.map(function (song) {
-              rememberNumericId((song || {}).mid, (song || {}).id);
-              return String((song || {}).mid || "");
-            }).filter(Boolean);
+          return allDissSongs(tid,data).then(function (rows) {
+            var songs=songsOf(rows), cache={};
+            songs.forEach(function(song){cache[song.id]=song;});
+            favoriteSongDetails=cache;
+            return songs.map(function(song){return song.id;});
           });
         });
       });

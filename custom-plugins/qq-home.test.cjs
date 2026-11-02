@@ -17,7 +17,7 @@ function plugin(respond) {
     throw Error('unexpected '+method);
   }}});
   vm.runInContext(fs.readFileSync(__dirname+'/qqmusic/src/main.js','utf8'),context);
-  return {home:context.home,requests};
+  return {home:context.home,like:context.like,songDetails:context.songDetails,requests};
 }
 
 test('QQ home returns playable personal-radio tracks using the QQ account, independently of playlist failures',async()=>{
@@ -37,4 +37,31 @@ test('QQ home returns playable personal-radio tracks using the QQ account, indep
 test('denied radio never fabricates music or consumes playlist content as songs',async()=>{
   const p=plugin(body=>body.guess?{guess:{code:1101,data:{tracks:null}}}:{recomPlaylist:{data:{v_hot:[]}}});
   const result=await p.home({limit:12});assert.equal(result.songs.length,0);
+});
+
+
+test('1018 favorites advance by actual page size, reuse complete metadata and retain exact playlist order',async()=>{
+  const offsets=[];let details=0;
+  const p=plugin(body=>{
+    if(body.mine)return {mine:{data:{v_playlist:[{dirId:201,tid:1234}]}}};
+    if(body.req && body.req.method==='uniform_get_Dissinfo'){
+      const start=body.req.param.song_begin;offsets.push(start);
+      const length=Math.min(200,1018-start);
+      return {req:{code:0,data:{dirinfo:{songnum:1018},songlist:Array.from({length},(_,i)=>({mid:'m'+(start+i),id:start+i+1,title:'歌曲'+(start+i),singer:[],interval:180}))}}};
+    }
+    details++;throw Error('cached favorite must not refetch song details');
+  });
+  const ids=await p.like({operation:'list'});assert.equal(ids.length,1018);assert.equal(ids[1017],'m1017');
+  assert.deepEqual(offsets,[0,200,400,600,800,1000]);
+  let resolved=[];for(let i=0;i<ids.length;i+=100)resolved.push(...await p.songDetails({ids:ids.slice(i,i+100)}));
+  assert.equal(resolved.length,1018);assert.equal(resolved[1017].id,'m1017');assert.equal(details,0);
+});
+
+test('uncached QQ metadata never sends more than ten modules per request',async()=>{
+  const sizes=[];const p=plugin(body=>{
+    const keys=Object.keys(body).filter(k=>k.startsWith('req_'));sizes.push(keys.length);
+    assert.ok(keys.length<=10);const response={};for(const key of keys)response[key]={data:{track_info:{mid:body[key].param.song_mid,title:'歌曲'}}};return response;
+  });
+  const mids=Array.from({length:118},(_,i)=>'m'+i);const songs=await p.songDetails({ids:mids});
+  assert.equal(songs.length,118);assert.equal(sizes.length,12);assert.equal(sizes.at(-1),8);
 });

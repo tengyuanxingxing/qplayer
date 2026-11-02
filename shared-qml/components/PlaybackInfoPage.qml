@@ -64,7 +64,10 @@ Item {
         }
         Repeater {
             model: player.playbackRelatedSongs
+            windowStart: Math.max(0,Math.floor((scroll.contentY-info.height-52)/72)-1)
+            windowCount: Math.ceil(scroll.height/72)+3
             SongRow {
+                objectName: "playbackRelatedRow"
                 width: scroll.width; y: info.height + 52 + index * 72; height: 72
                 rowTitle: modelData.name; rowArtist: modelData.artist
                 coverThumbPath: modelData.coverThumbPath || modelData.coverUrl

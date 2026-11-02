@@ -562,9 +562,32 @@ public class QmlReviewRegressionTest {
             try {
                 scene.view.dispatchPointerDown(160,30);scene.view.dispatchPointerMove(270,35);scene.view.dispatchPointerUp(270,35);q.flush();
                 assertTrue(scene.player.lyricsOpen.peek());
-                scene.view.dispatchPointerDown(160,30);scene.view.dispatchPointerMove(164,80);scene.view.dispatchPointerMove(168,145);scene.view.dispatchPointerUp(168,145);q.flush();
+                scene.view.dispatchPointerDown(160,30);scene.view.dispatchPointerMove(164,80);scene.view.dispatchPointerMove(168,345);
+                assertTrue("finger owns position before release",scene.player.playbackDismissDragging.peek());
+                assertTrue(scene.player.playbackDismissOffset.peek()>0.3);
+                scene.view.dispatchPointerUp(168,345);q.flush();
                 assertFalse("header swipe collapses player",scene.player.lyricsOpen.peek());
             } finally {q.uninstall();}
+        }
+    }
+
+    @Test public void unifiedPlaylistCoverTracksTheActualFirstSongAndControlsLiveInOverflow() throws Exception {
+        try(Scene scene=new Scene(temporary.newFolder().toPath())) {
+            scene.player.openSourcePlaylistId.set("qplayer:playlist:unified-favorites");
+            scene.player.playlistTitle.set("我喜欢 · 全部平台");scene.player.playlistLoading.set(false);
+            dev.t1m3.qplayer.media.Song a=new dev.t1m3.qplayer.media.Song();a.id="qq:song:a";a.name=a.title="第一首";a.coverThumbPath="first.png";
+            dev.t1m3.qplayer.media.Song b=new dev.t1m3.qplayer.media.Song();b.id="netease:song:b";b.name=b.title="第二首";b.coverThumbPath="second.png";
+            scene.player.sourcePlaylistTracks.set(java.util.Arrays.asList(a,b));
+            scene.load("import QtQuick\nimport \"pages\"\nPlaylistDetailPage { width:480; height:806 }");
+            Item cover=scene.view.findByObjectName("playlistFirstSongCover");assertNotNull(cover);
+            assertEquals("first.png",property(cover,"source").peek());
+            var position=scene.view.root().mapFromItem(cover,0,0);assertTrue("no permanent filter block above cover",((Number)position.get("y")).floatValue()<110);
+            scene.player.sourcePlaylistTracks.set(java.util.Arrays.asList(b,a));scene.frames(5);
+            assertEquals("second.png",property(cover,"source").peek());
+            Item more=scene.view.findByObjectName("playlistDetailOverflowButton");assertTrue(more.visible.peek());
+            scene.click(more,more.width.peekFloat()/2,more.height.peekFloat()/2);scene.frames(5);
+            Item menu=scene.view.findByObjectName("favoritesOverflowMenu");assertNotNull(menu);
+            assertEquals("overflow is available even in the unified view",true,property(menu,"opened").peek());
         }
     }
 

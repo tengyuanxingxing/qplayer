@@ -37,6 +37,7 @@ import dev.t1m3.qplayer.netease.dto.NeteaseLyric;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
 import dev.t1m3.qplayer.playlist.UnifiedFavorites;
+import dev.t1m3.qplayer.playlist.FavoritesMix;
 import dev.t1m3.qplayer.playlist.LocalPlaylist;
 import dev.t1m3.qplayer.playlist.LocalPlaylistStore;
 import dev.t1m3.qplayer.playlist.MyPlaylistOrderStore;
@@ -75,6 +76,7 @@ import io.github.timer_err.qml4j.runtime.color.StyleManager;
 
 import java.util.ArrayDeque;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashMap;
 import java.util.HashSet;
@@ -813,6 +815,102 @@ public final class PlayerController {
     public final Property<String> unifiedFavoritesStatus = new Property<>("");
     public final Property<String> unifiedFavoritesSource = new Property<>("");
 
+    private final Map<String,String> favoriteSyncDetails=new LinkedHashMap<>();
+    private final Map<String,String> favoriteAccountIds=new LinkedHashMap<>();
+    private FavoritesMix.Config favoriteMix=new FavoritesMix.Config();
+    private String favoriteMixScope="";
+    public final Property<String> favoriteMixBase=new Property<>(mixProviderChoice("base","qq"));
+    public final Property<String> favoriteMixInsert=new Property<>(mixProviderChoice("insert","netease"));
+    public final Property<String> favoriteMixMode=new Property<>("off");
+    public final Property<String> favoriteMixSummary=new Property<>("未设置穿插范围");
+    public final Property<String> favoriteMixRatio=new Property<>("1∶1");
+    private static String mixProviderChoice(String key,String fallback) {
+        try {String value=new com.google.gson.JsonParser().parse(StorageFiles.readUtf8(AppDirs.configFile("favorite-mix-providers.json"))).getAsJsonObject().get(key).getAsString();return value.isEmpty()?fallback:value;}
+        catch(Exception ignored){return fallback;}
+    }
+    private Map<String,FavoritesMix.Config> mixSettings() {
+        try {
+            java.lang.reflect.Type type=new com.google.gson.reflect.TypeToken<Map<String,FavoritesMix.Config>>(){}.getType();
+            Map<String,FavoritesMix.Config> values=new com.google.gson.Gson().fromJson(StorageFiles.readUtf8(AppDirs.configFile("favorite-mix-v1.json")),type);
+            if(values!=null)return values;
+        }catch(Exception ignored){}
+        return new LinkedHashMap<>();
+    }
+    private void reloadFavoriteMix() {
+        String base=favoriteMixBase.peek(),insert=favoriteMixInsert.peek();
+        String key=base+"\n"+favoriteAccountIds.getOrDefault(base,"")+"\n"+insert+"\n"+favoriteAccountIds.getOrDefault(insert,"");
+        if(key.equals(favoriteMixScope))return;
+        favoriteMixScope=key;favoriteMix=mixSettings().get(key);
+        if(favoriteMix==null)favoriteMix=new FavoritesMix.Config();
+        favoriteMix.baseProvider=base;favoriteMix.insertProvider=insert;
+        publishMixSetting();
+    }
+    private void publishMixSetting() {
+        favoriteMixMode.set(FavoritesMix.valid(favoritesBySource,favoriteMix)?favoriteMix.mode:"off");favoriteMixRatio.set(favoriteMix.baseRatio+"∶"+favoriteMix.insertRatio);
+        String name="";List<Song> base=favoritesBySource.get(favoriteMix.baseProvider);
+        if(base!=null)for(Song song:base)if(song.id.equals(favoriteMix.baseEnd)){name=song.name;break;}
+        favoriteMixSummary.set(favoriteMix.baseEnd.isEmpty()?"尚未选择主序区段，长按歌曲设置起止点":
+            "*".equals(favoriteMix.baseEnd)?"整个主序收藏参与":"主序区段结束于："+(name.isEmpty()?"分界歌曲已移除，请重新选择":name));
+    }
+    private void saveFavoriteMix() {
+        publishMixSetting();
+        if(favoriteAccountIds.getOrDefault(favoriteMix.baseProvider,"").isEmpty()||favoriteAccountIds.getOrDefault(favoriteMix.insertProvider,"").isEmpty())return;
+        Map<String,FavoritesMix.Config> settings=mixSettings();settings.put(favoriteMixScope,favoriteMix);
+        try{StorageFiles.writeUtf8Atomic(AppDirs.configFile("favorite-mix-v1.json"),new com.google.gson.Gson().toJson(settings));}catch(Exception ignored){}
+    }
+    public boolean canMixFavoritesSource(String provider) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            List<Song> songs=favoritesBySource.get(provider);return songs!=null&&!songs.isEmpty();
+        }
+    }
+    public void setFavoriteMixProvider(String role,String provider) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            if(!favoritesBySource.containsKey(provider))return;
+            if("base".equals(role)) {
+                String previous=favoriteMixBase.peek();favoriteMixBase.set(provider);
+                if(provider.equals(favoriteMixInsert.peek()))favoriteMixInsert.set(previous);
+            }else {
+                if(provider.equals(favoriteMixBase.peek()))return;
+                favoriteMixInsert.set(provider);
+            }
+            try {Map<String,String> selection=new LinkedHashMap<>();selection.put("base",favoriteMixBase.peek());selection.put("insert",favoriteMixInsert.peek());StorageFiles.writeUtf8Atomic(AppDirs.configFile("favorite-mix-providers.json"),new com.google.gson.Gson().toJson(selection));}catch(Exception ignored){}
+            reloadFavoriteMix();publishUnifiedFavorites();
+        }
+    }
+    public void setFavoriteMixMode(String mode) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            if(!"blocks".equals(mode)&&!"interleave".equals(mode))mode="off";
+            if(!"off".equals(mode)&&!FavoritesMix.valid(favoritesBySource,favoriteMix)) {
+                showToast("请先选择两边来源，并长按主序最后一首参与歌曲设置区段终点");return;
+            }
+            favoriteMix.mode=mode;saveFavoriteMix();publishUnifiedFavorites();
+        }
+    }
+    public void setFavoriteMixRatio(int base,int insert) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            favoriteMix.baseRatio=Math.max(1,Math.min(10,base));favoriteMix.insertRatio=Math.max(1,Math.min(10,insert));saveFavoriteMix();publishUnifiedFavorites();
+        }
+    }
+    public void setFavoriteMixWhole(String role) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            if("base".equals(role)){favoriteMix.baseStart="";favoriteMix.baseEnd="*";}
+            else{favoriteMix.insertStart="";favoriteMix.insertEnd="";}
+            saveFavoriteMix();publishUnifiedFavorites();
+        }
+    }
+    public void setFavoriteMixBoundary(String mediaId,boolean start) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            String provider=mediaId.substring(0,mediaId.indexOf(':'));
+            List<Song> rows=favoritesBySource.get(provider);if(rows==null)return;
+            boolean found=false;for(Song row:rows)if(row.id.equals(mediaId)){found=true;break;}if(!found)return;
+            if(provider.equals(favoriteMix.baseProvider)){if(start)favoriteMix.baseStart=mediaId;else favoriteMix.baseEnd=mediaId;}
+            else if(provider.equals(favoriteMix.insertProvider)){if(start)favoriteMix.insertStart=mediaId;else favoriteMix.insertEnd=mediaId;}
+            else return;
+            if(FavoritesMix.valid(favoritesBySource,favoriteMix)&&"off".equals(favoriteMix.mode))favoriteMix.mode="interleave";
+            unifiedFavoritesSource.set("");saveFavoriteMix();publishUnifiedFavorites();showToast("参与穿插的区段已更新");
+        }
+    }
+
     public final Property<String> favoritePreferredSource = new Property<>(loadFavoritePreference());
     private static String loadFavoritePreference() {
         try { return "netease".equals(StorageFiles.readUtf8(AppDirs.configFile("favorite-source.txt")).trim()) ? "netease" : "qq"; }
@@ -836,7 +934,8 @@ public final class PlayerController {
     }
 
     private void publishUnifiedFavorites() {
-        List<Song> all = UnifiedFavorites.merge(favoritesBySource.values(), favoritePreferredSource.peek());
+        List<Song> all=FavoritesMix.order(favoritesBySource,favoritePreferredSource.peek(),favoriteMix);
+        publishMixSetting();
         unifiedFavoritesCount.set(all.size());
         if (!UnifiedFavorites.ID.equals(openSourcePlaylistId.peek())) return;
         String source = unifiedFavoritesSource.peek();
@@ -872,12 +971,19 @@ public final class PlayerController {
                         if (error != null || result == null || result.stale) failures.add(manifest.name);
                         if (result != null) {
                             if (result.signedIn) {
+                                favoriteAccountIds.put(provider,result.accountId);reloadFavoriteMix();
+                                String detail=manifest.name+"："+result.songs.size()+" 首";
+                                if(result.likedIds!=null)detail+=" / 收藏 "+result.likedIds.size()+" 首";
+                                if(result.stale)detail+="（未完整更新，保留可用内容）";
+                                favoriteSyncDetails.put(provider,detail);
                                 for (Song song : result.songs) song.favoriteSources = manifest.name;
                                 favoritesBySource.put(provider, result.songs);
                                 if (result.likedIds != null) pluginLikedBySource.put(provider, result.likedIds);
                             }
                             else {
                                 favoritesBySource.remove(provider);
+                                favoriteSyncDetails.put(provider,manifest.name+"：未登录");
+                                favoriteAccountIds.remove(provider);reloadFavoriteMix();
                                 pluginLikedBySource.remove(provider);
                             }
                             publishPluginLiked();
@@ -885,9 +991,11 @@ public final class PlayerController {
                         publishUnifiedFavorites();
                         if (--pending[0] == 0) {
                             unifiedFavoritesSyncing.set(false);
-                            unifiedFavoritesStatus.set(failures.isEmpty()
-                                ? "已同步 · " + unifiedFavoritesCount.peek() + " 首 · 红心更新歌曲所属平台"
-                                : String.join("、", failures) + " 未完整更新，已保留可用收藏");
+                            List<String> details=new ArrayList<>();
+                            for(String id:enabled)if(favoriteSyncDetails.containsKey(id))details.add(favoriteSyncDetails.get(id));
+                            if(!failures.isEmpty())details.add(String.join("、",failures)+" 未完整更新，刷新可重试");
+                            details.add("合并去重后："+unifiedFavoritesCount.peek()+" 首");
+                            unifiedFavoritesStatus.set(String.join("\n",details));
                         }
                     }));
             }
@@ -3750,6 +3858,34 @@ public final class PlayerController {
         }
     }
 
+    public final Property<Boolean> playbackDismissDragging=new Property<>(false);
+    public final Property<Double> playbackDismissOffset=new Property<>(0.0);
+    public final Property<Double> playbackDismissVelocity=new Property<>(0.0);
+    public final Property<Long> playbackDismissReleaseRevision=new Property<>(0L);
+    public final Property<Double> playbackSheetOffset=new Property<>(1.0);
+    public void updatePlaybackDismiss(double offset) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            if(!lyricsOpen.peek())return;
+            playbackDismissOffset.set(Math.max(0.0,Math.min(1.0,offset)));playbackDismissDragging.set(true);
+        }
+    }
+    public void finishPlaybackDismiss(double speed) {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            if(!playbackDismissDragging.peek())return;
+            boolean close=dev.t1m3.qplayer.lyric.skia.PlaybackSheetMotion.shouldDismiss(playbackDismissOffset.peek(),speed);
+            playbackDismissVelocity.set(speed);playbackDismissReleaseRevision.set(playbackDismissReleaseRevision.peek()+1);
+            playbackDismissDragging.set(false);
+            if(close)setLyricsOpen(false);
+        }
+    }
+    public void cancelPlaybackDismiss() {
+        synchronized(QmlRuntimeLock.MONITOR) {
+            if(!playbackDismissDragging.peek())return;
+            playbackDismissVelocity.set(0.0);playbackDismissReleaseRevision.set(playbackDismissReleaseRevision.peek()+1);
+            playbackDismissDragging.set(false);
+        }
+    }
+
     public void setLyricsOpen(boolean open) {
         synchronized (QmlRuntimeLock.MONITOR) {
             lyricsOpen.set(open);
@@ -3879,6 +4015,8 @@ public final class PlayerController {
     public final Property<String> playbackInfoStatus = new Property<>("");
     public final Property<List<Song>> playbackRelatedSongs = new Property<>(Collections.emptyList());
     private long playbackInfoGeneration;
+    private String playbackInfoMediaId="";
+    private long playbackInfoRequestedAt;
     public void setCoverMode(boolean on) {
         synchronized (QmlRuntimeLock.MONITOR) {
             playbackPage.set(on ? 1 : 2); coverModeManual.set(on);
@@ -3909,7 +4047,12 @@ public final class PlayerController {
     }
     public void refreshPlaybackInfo() {
         synchronized (QmlRuntimeLock.MONITOR) {
-            Track track = currentTrack(); final long generation = ++playbackInfoGeneration;
+            Track track = currentTrack();
+            String requestedId=track!=null?track.canonicalId():"";
+            long now=System.currentTimeMillis();
+            if(!requestedId.isEmpty()&&requestedId.equals(playbackInfoMediaId)&&now-playbackInfoRequestedAt<60_000L)return;
+            playbackInfoMediaId=requestedId;playbackInfoRequestedAt=now;
+            final long generation = ++playbackInfoGeneration;
             playbackAlbumId.set(""); playbackAlbumName.set(track == null || track.album == null ? "" : track.album);
             playbackRelease.set(""); playbackCredits.set(""); playbackGenre.set("");
             playbackRelatedSongs.set(Collections.emptyList()); playbackInfoStatus.set("");
@@ -3931,6 +4074,7 @@ public final class PlayerController {
                     if (error == null && page != null) for (Song song : page.items) if (!mediaId.equals(song.id)) rows.add(song);
                     playbackRelatedSongs.set(Collections.unmodifiableList(rows));
                     playbackInfoStatus.set(error == null ? (rows.isEmpty() ? "暂无更多推荐" : "") : "推荐加载失败，可稍后重试");
+                    if(error!=null)playbackInfoRequestedAt=0L;
                 }));
             }
         }
@@ -10478,6 +10622,7 @@ public final class PlayerController {
     private void dropSourceUserData(String providerId) {
         favoritesGeneration.incrementAndGet();
         favoritesBySource.remove(providerId);
+        favoriteAccountIds.remove(providerId);reloadFavoriteMix();
         publishUnifiedFavorites();
         unifiedFavoritesSyncing.set(false);
         unifiedFavoritesStatus.set("账号已退出，其他平台收藏已保留");

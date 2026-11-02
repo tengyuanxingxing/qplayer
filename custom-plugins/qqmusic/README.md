@@ -19,7 +19,7 @@ QPlayer 核心之外。
 | `artistDetails` / `albumDetails` | 歌手与专辑详情 |
 | `home` | QQ 猜你喜欢 / 个性电台歌曲（`get_radio_track`）与推荐歌单；沿用当前 QQ 登录，歌曲和歌单独立加载 |
 | `userPlaylists` | 自建歌单（含「我喜欢」）与收藏的歌单 |
-| `like` | 「我喜欢」的读取与增删 |
+| `like` | 「我喜欢」全量分页读取与增删；复用歌单详情，避免大批量补取丢歌 |
 | `playlistMutation` | 新建/删除歌单、增删歌曲、收藏/取消收藏歌单 |
 | `resolveStream` | M800/M500 MP3 播放地址，**需要登录**（2026 起匿名 Vkey 已收紧） |
 | `lyrics` | 明文 LRC，匿名可用 |

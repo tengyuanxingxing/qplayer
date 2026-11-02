@@ -73,19 +73,31 @@ Item {
     // Swallow taps on the empty (lyrics) area so they don't leak through.
     MouseArea {
         anchors.fill: parent
-        property real downX: 0
-        property real downY: 0
-        property bool dismissEligible: false
-        onPressed: (mouse) => {
-            downX = mouse.x; downY = mouse.y
-            dismissEligible = !overlay.landscape && (mouse.y < overlay.topPad + 54 || player.playbackPage === 1)
+        property real downX:0
+        property real downY:0
+        property real lastY:0
+        property real lastTime:0
+        property real speed:0
+        property bool dismissEligible:false
+        property bool dismissing:false
+        onPressed:(mouse)=>{
+            downX=mouse.x;downY=mouse.y+overlay.y;lastY=downY;lastTime=Date.now();speed=0;dismissing=false
+            dismissEligible=!overlay.landscape && (mouse.y<overlay.topPad+54 || player.playbackPage===1)
         }
-        onReleased: (mouse) => {
-            if (dismissEligible && mouse.y - downY >= 72 && Math.abs(mouse.x - downX) < (mouse.y - downY) * 0.75)
-                overlay.closeRequested()
-            dismissEligible = false
+        onPositionChanged:(mouse)=>{
+            var y=mouse.y+overlay.y,dy=y-downY,dx=mouse.x-downX,now=Date.now()
+            if(dismissEligible && (dismissing || (dy>10 && Math.abs(dx)<dy*0.75))) {
+                dismissing=true
+                if(now>lastTime)speed=(y-lastY)/((now-lastTime)/1000)/overlay.height
+                player.updatePlaybackDismiss(Math.max(0,dy/overlay.height))
+            } else if(Math.abs(dx)>10 || dy< -10)dismissEligible=false
+            lastY=y;lastTime=now
         }
-        onCanceled: dismissEligible = false
+        onReleased:(mouse)=>{
+            if(dismissing)player.finishPlaybackDismiss(Date.now()-lastTime>120?0:speed)
+            dismissing=false;dismissEligible=false
+        }
+        onCanceled:{player.cancelPlaybackDismiss();dismissing=false;dismissEligible=false}
     }
 
     // --- portrait: big centred cover for no-lyric / instrumental tracks. It zooms +

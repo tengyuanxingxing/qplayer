@@ -5,6 +5,9 @@ import io.github.humbleui.skija.Canvas;
 import io.github.humbleui.skija.DirectContext;
 import io.github.humbleui.skija.FilterTileMode;
 import io.github.humbleui.skija.ImageFilter;
+import io.github.humbleui.skija.Image;
+import io.github.humbleui.skija.Surface;
+import io.github.humbleui.types.RRect;
 import io.github.humbleui.skija.Paint;
 import io.github.humbleui.skija.Shader;
 import io.github.humbleui.types.Rect;
@@ -101,6 +104,9 @@ public final class LyricCompositor {
 
     private final LyricRenderer lyricRenderer = new LyricRenderer();
     private Shader portraitBackdrop;
+    private Image portraitBackdropImage;
+    private final PlaybackSheetMotion sheetMotion=new PlaybackSheetMotion();
+    private long sheetFrameNs,sheetReleaseRevision=-1;
     private String portraitBackdropKey = "";
     private final Paint portraitBackdropPaint = new Paint();
     private final FluidBackground fluidBg = new FluidBackground(System.nanoTime());
@@ -216,6 +222,7 @@ public final class LyricCompositor {
         temperaPage.dispose();
         fluidBg.dispose();
         if (portraitBackdrop != null) portraitBackdrop.close();
+        if (portraitBackdropImage != null) portraitBackdropImage.close();
         portraitBackdropPaint.close();
         lyricRenderer.dispose();
         if (lyFadeShader != null) {
@@ -331,6 +338,7 @@ public final class LyricCompositor {
             renderedFontSize = fontSize;
         }
         if (controller != null) {
+            advanceSheet(controller);
             long now = System.nanoTime();
             float targetPage = controller.playbackPage.peek();
             if (Boolean.TRUE.equals(controller.playbackDragging.peek())) {
@@ -346,6 +354,7 @@ public final class LyricCompositor {
             playbackPageNs = now;
             controller.playbackPagePosition.set((double)playbackPagePosition);
         }
+        view.dirtyQueue().flush();
         prepareChrome(view, renderer);
         long glassTime = System.nanoTime();
         for (LiquidGlassNode node : liquidGlass) {
@@ -545,6 +554,7 @@ public final class LyricCompositor {
         if (slideNow > 0.001 && lyricChrome != null) {
             int scC = canvas.save();
             canvas.scale(uiScale, uiScale);
+            if(sheetMotion.offset()>0.001f)canvas.clipRRect(RRect.makeXYWH(0f,sheetMotion.offset()*lh,lw,lh,20f));
             if (fullyCovered && renderer.pictureCacheEnabled()) {
                 // renderSubtree() intentionally bypasses qml4j's picture cache. Once
                 // the lyric page is stable and fully covers the main scene, render it
@@ -565,21 +575,31 @@ public final class LyricCompositor {
     // Host-drawn lyric page: a fluid (SkSL, cover-keyed) backdrop with the
     // LyricRenderer on top, sliding up over the QML scene. Runs every frame so the
     // slide + scroll springs animate.
+    private void advanceSheet(PlayerController controller) {
+        boolean open=Boolean.TRUE.equals(controller.lyricsOpen.peek());
+        long frame=System.nanoTime();
+        if(sheetFrameNs==0L)sheetMotion.dragTo(1f-controller.lyricSlide.peek().floatValue());
+        float sheetDt=sheetFrameNs==0L?1f/60f:Math.min(0.05f,(frame-sheetFrameNs)/1_000_000_000f);
+        sheetFrameNs=frame;
+        if(Boolean.TRUE.equals(controller.playbackDismissDragging.peek())) {
+            sheetMotion.dragTo(controller.playbackDismissOffset.peek().floatValue());
+        }else {
+            long release=controller.playbackDismissReleaseRevision.peek();
+            if(release!=sheetReleaseRevision&&sheetReleaseRevision>=0L)
+                sheetMotion.releaseAt(controller.playbackDismissOffset.peek().floatValue(),controller.playbackDismissVelocity.peek().floatValue());
+            sheetMotion.advance(open,sheetDt);
+        }
+        sheetReleaseRevision=controller.playbackDismissReleaseRevision.peek();
+        lyricSlide=1f-sheetMotion.offset();
+        controller.playbackSheetOffset.set((double)sheetMotion.offset());
+        controller.lyricSlide.set((double)lyricSlide);
+    }
+
     private void drawLyricOverlay(Canvas canvas, PlayerController controller,
                                   SettingsBridge settings, DirectContext ctx,
                                   float uiScale, int fbW, int fbH) {
         if (controller == null) return;
         boolean open = Boolean.TRUE.equals(controller.lyricsOpen.peek());
-        float target = open ? 1f : 0f;
-        // The lyric page is a spatial bottom sheet, independent of the navigation
-        // page preset. Ease a little more slowly than the old 0.22 response while
-        // retaining the same interruptible, frame-stable approach.
-        lyricSlide += (target - lyricSlide) * 0.18f;
-        if (Math.abs(target - lyricSlide) < 0.002f) lyricSlide = target;
-        // Publish to QML so the LyricOverlay chrome fades in/out in lockstep. set()
-        // no-ops on an unchanged value, so once settled-closed this stops bumping the
-        // change version.
-        controller.lyricSlide.set((double) lyricSlide);
         // Closed and settled: nothing more to draw. RETURN BEFORE touching
         // lyricProgress — it changes every frame while playing, and setting it would
         // bump the change version every frame, defeating the renderer's idle skip.
@@ -707,8 +727,8 @@ public final class LyricCompositor {
 
         // The page always slides up from the bottom over the main scene. Its QML
         // chrome uses this same smoothstep progress, so both layers stay locked.
-        float ease = lyricSlide * lyricSlide * (3f - 2f * lyricSlide); // smoothstep
-        canvas.translate(0f, (1f - ease) * h);
+        canvas.translate(0f, sheetMotion.offset() * h);
+        if(sheetMotion.offset()>0.001f)canvas.clipRRect(RRect.makeXYWH(0f,0f,w,h,20f));
 
         // 1) fluid backdrop, keyed by the current track. The key only changes on a
         // track switch, so rebuild the concatenated string only when an input does.
@@ -801,7 +821,12 @@ public final class LyricCompositor {
             int alpha = Math.round(Math.max(0f, Math.min(1f,
                     lyricShow * (float) Math.sqrt(fullWidthSwap))) * 255f);
             lyLayerPaint.setAlpha(alpha);
-            int lc = canvas.saveLayer(colRect, alpha < 255 ? lyLayerPaint : null);
+            // During a sideways gesture the viewport already clips the moving page.
+            // Avoid a full-column offscreen alpha-mask pass until the page settles.
+            boolean horizontalMoving=!landscape && (Boolean.TRUE.equals(controller.playbackDragging.peek())
+                    || Math.abs(playbackPagePosition-controller.playbackPage.peek())>0.002f);
+            int lc=horizontalMoving?canvas.save():canvas.saveLayer(colRect,alpha<255?lyLayerPaint:null);
+            if(horizontalMoving)canvas.clipRect(colRect);
             float s = 0.95f + 0.05f * lyricShow;
             float cx = colLeft + (w - colLeft) * 0.5f;
             float cy = colTopY + colH * 0.5f;
@@ -835,10 +860,11 @@ public final class LyricCompositor {
                 lyricRenderer.render(canvas, colLeft + pad, colTopY, colW, colH, pos);
             }
             canvas.restoreToCount(zc);
-            lyMaskPaint.setShader(lyFadeShader);
-            lyMaskPaint.setBlendMode(BlendMode.DST_IN);
-            canvas.drawRect(colRect, lyMaskPaint);
-            lyMaskPaint.setShader(null);
+            if(!horizontalMoving) {
+                lyMaskPaint.setShader(lyFadeShader);
+                lyMaskPaint.setBlendMode(BlendMode.DST_IN);
+                canvas.drawRect(colRect,lyMaskPaint);lyMaskPaint.setShader(null);
+            }
             canvas.restoreToCount(lc);
         }
 
@@ -862,9 +888,17 @@ public final class LyricCompositor {
             portraitBackdrop = Shader.makeLinearGradient(0f, 0f, w * 0.3f, h,
                     new int[]{top, bottom}, new float[]{0f, 1f});
             portraitBackdropPaint.setShader(portraitBackdrop);
+            if(portraitBackdropImage!=null)portraitBackdropImage.close();
+            // The backdrop is static. Rasterize its tiny linear gradient once rather
+            // than re-evaluating a full-screen shader on every drag/lyric frame.
+            try(Surface tile=Surface.makeRasterN32Premul(64,128)) {
+                Canvas background=tile.getCanvas();background.scale(64f/w,128f/h);
+                background.drawRect(backdropClipRect,portraitBackdropPaint);
+                portraitBackdropImage=tile.makeImageSnapshot();
+            }
             portraitBackdropKey = key;
         }
-        canvas.drawRect(backdropClipRect, portraitBackdropPaint);
+        if(portraitBackdropImage!=null)canvas.drawImageRect(portraitBackdropImage,backdropClipRect);
     }
 
     // Progressive edge blur: draw a uniformly blurred column, then overlay a sharp copy
@@ -972,10 +1006,12 @@ public final class LyricCompositor {
                 0f, topY, 0f, topY + colH,
                 new int[]{0x00FFFFFF, 0xFFFFFFFF, 0xFFFFFFFF, 0x00FFFFFF},
                 new float[]{0f, f, 1f - f, 1f});
+
     }
 
     /** Drop the cached chrome lookup so it re-resolves against a freshly loaded scene. */
     public void onSceneReloaded() {
+        sheetFrameNs=0L;sheetReleaseRevision=-1L;
         temperaChrome = null;
         lyricChrome = null;
         fullscreenExitIndicator = null;

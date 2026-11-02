@@ -141,6 +141,24 @@ public class PlaybackPagePreviewTest {
                             if(out!=null && step>=3)try(Image img=surface.makeImageSnapshot();Data data=img.encodeToData()){Files.write(Paths.get(out,"text-size-"+textSize+".png"),data.getBytes());}
                         }
                     }
+                    player.setCoverMode(true);player.lyricsOpen.set(true);
+                    try(Surface surface=Surface.makeRasterN32Premul(390,844)) {
+                        for(int i=0;i<45;i++){view.tickAnimations(System.nanoTime());queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);Thread.sleep(8);}
+                        player.updatePlaybackDismiss(0.2);
+                        compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);queue.flush();
+                        Item chrome=view.findByObjectName("lyricChrome");
+                        assertEquals("card follows finger before release",844*0.2,chrome.y.peekFloat(),1.0);
+                        assertTrue("drag alone does not close the player",player.lyricsOpen.peek());
+                        String out=System.getProperty("qplayer.preview.dir");
+                        if(out!=null)try(Image im=surface.makeImageSnapshot();Data data=im.encodeToData()){Files.write(Paths.get(out,"player-card-drag-390.png"),data.getBytes());}
+                        player.cancelPlaybackDismiss();
+                        for(int i=0;i<75;i++){queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);Thread.sleep(8);}
+                        assertEquals("short/canceled drag springs back",0,chrome.y.peekFloat(),1.5);
+                        player.updatePlaybackDismiss(.4);compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);
+                        player.finishPlaybackDismiss(0);assertFalse("long drag commits collapse",player.lyricsOpen.peek());
+                        for(int i=0;i<75;i++){queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);Thread.sleep(8);}
+                        assertTrue("card continues down until closed",player.playbackSheetOffset.peek()>.998);
+                    }
                 } finally {queue.uninstall();}
             }
         } finally {
