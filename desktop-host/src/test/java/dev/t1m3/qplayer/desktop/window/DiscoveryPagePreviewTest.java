@@ -41,7 +41,7 @@ public class DiscoveryPagePreviewTest {
                 try(Image im=s.makeImageSnapshot();Data data=im.encodeToData()){Files.write(art,data.getBytes());}
             }
             List<Song> songs=new ArrayList<>();
-            for(int i=0;i<12;i++){Song s=new Song();s.id="qq:song:preview"+i;s.name=s.title=new String[]{"在路上","远方的微光","晚风","晴天日记"}[i%4];s.artist="示例音乐人 · 界面预览";s.coverUrl=s.artworkUrl=s.coverThumbPath=art.toString();songs.add(s);}
+            for(int i=0;i<30;i++){Song s=new Song();s.id="qq:song:preview"+i;s.name=s.title=new String[]{"在路上","远方的微光","晚风","晴天日记"}[i%4];s.artist="示例音乐人 · 界面预览";s.coverUrl=s.artworkUrl=s.coverThumbPath=art.toString();songs.add(s);}
             try(BundledQml bundle=new BundledQml("Main.qml")) {
                 ClasspathResourceLoader resources=new ClasspathResourceLoader();
                 view=bundle.configure(QmlView.withStockTypes(new QmlEngine(bundle)),resources);
@@ -59,11 +59,21 @@ public class DiscoveryPagePreviewTest {
                     player.heartExploreReason.set("根据红心收藏中的歌手探索 · 预览数据");player.title.set("在路上");player.artist.set("示例音乐人");
                     player.playbackRelatedSongs.set(songs);player.coverPath.set(art.toString());player.coverSeed.set("#618AC0");
                     snapshot(view,player,settings,compositor,"home-390",0);
-                    assertEquals("source fixture survives home loading",12,player.qqGuessSongs.peek().size());
+                    assertEquals("source fixture survives home loading",30,player.qqGuessSongs.peek().size());
                     Item home=view.findByObjectName("homeDiscoveryPage");
                     Item section=view.findByObjectName("homeSongSection");
                     assertTrue("Home section enabled",Boolean.TRUE.equals(prop(section,"pageActive").peek()));
                     assertTrue("Home section renders actual song rows",hasSongRow(section));
+                    Item carousel=view.findByObjectName("homeSongCarousel");
+                    assertNotNull(carousel);
+                    float columns=((Number)prop(carousel,"contentWidth").peek()).floatValue();
+                    assertTrue("thirty songs span ten groups horizontally",columns>carousel.width.peekFloat()*8);
+                    assertEquals("still only three visible rows",228f,carousel.height.peekFloat(),0.1f);
+                    prop(carousel,"contentX").set(columns-carousel.width.peekFloat());settle(view);
+                    assertTrue("last group is virtualized into the actual scene",hasSongRow(carousel));
+                    assertTrue("virtualization bounds live row count",countNamed(carousel,"songRowTitle")<=9);
+                    snapshot(view,player,settings,compositor,"home-last-group-390",0);
+                    prop(carousel,"contentX").set(0f);settle(view);
                     player.qqGuessSongs.set(new ArrayList<>());settle(view);
                     assertTrue("empty recommendations collapse",section.height.peekFloat()<110);
                     snapshot(view,player,settings,compositor,"home-empty-390",0);

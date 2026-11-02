@@ -4,6 +4,19 @@ import java.util.Arrays;
 
 /** Pure policy shared by the downloaded-APK check and its regression tests. */
 final class UpdatePackagePolicy {
+    static String targetVersion(String url) {
+        if (url == null) return "";
+        java.util.regex.Matcher m = java.util.regex.Pattern.compile(
+                "/releases/download/v([^/]+)/[^/?]+\\.apk(?:\\?.*)?$").matcher(url);
+        return m.find() ? m.group(1) : "";
+    }
+
+    static boolean matchesTarget(String target, String archiveVersion) {
+        if (target == null || target.isEmpty() || archiveVersion == null) return false;
+        return target.equals(archiveVersion) || (target + "-debug").equals(archiveVersion)
+                || (target + "-perf").equals(archiveVersion);
+    }
+
     static boolean compatible(String installedId, long installedVersion, byte[][] installedSigners,
                               String archiveId, long archiveVersion, byte[][] archiveSigners) {
         if(installedId == null || !installedId.equals(archiveId) || archiveVersion <= installedVersion)

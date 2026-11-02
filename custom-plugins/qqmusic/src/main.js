@@ -635,29 +635,40 @@ function homePlaylists(args) {
 
 /** QQ 客户端的猜你喜欢 / 个性电台；沿用 musicu 的 Cookie、authst 与续期。 */
 function guessSongs(limit) {
-  return musicu({guess: {
+  var rows = [], seen = {}, excluded = [], attempts = 0;
+  function next() { return musicu({guess: {
     module: "music.radioProxy.MbTrackRadioSvr", method: "get_radio_track",
     param: {id:99, num:Math.min(30, Math.max(1, limit)), from:0, scene:0,
-      song_ids:[], ext:{bluetooth:""}, should_count_down:1}
+      song_ids:excluded, ext:{bluetooth:""}, should_count_down:1}
   }}, ANDROID_COMM).then(function (body) {
     var node = body.guess || {};
-    if (Number(node.code || 0) !== 0) return [];
+    if (Number(node.code || 0) !== 0) return rows;
     var data = node.data || {}, tracks = data.tracks || [];
-    var seen = {};
-    return songsOf(tracks, function (row) {
+    var before = rows.length;
+    tracks.forEach(function (row) {
+      var info = row.track_info || row.songInfo || row.song_info || row;
+      var id = Number(info.id || info.songid || 0);
+      if (id > 0 && excluded.indexOf(id) < 0) excluded.push(id);
+    });
+    songsOf(tracks, function (row) {
       return row.track_info || row.songInfo || row.song_info || row;
-    }).filter(function (song) {
-      if (seen[song.id]) return false;
-      seen[song.id] = true; return true;
-    }).slice(0, limit);
-  });
+    }).forEach(function (song) {
+      if (!seen[song.id]) { seen[song.id] = true; rows.push(song); }
+    });
+    // Some radio responses contain fewer tracks than num. Continue with exclusions,
+    // retaining service order, but stop if the service repeats/ends its results.
+    if (rows.length < limit && rows.length > before && ++attempts < 10) return next();
+    return rows.slice(0, limit);
+  }).catch(function (error) { if (rows.length) return rows.slice(0, limit); throw error; }); }
+  return next();
 }
 
 function home(args) {
   var limit = Math.min(30, Math.max(1, Number(args.limit || 12)));
   // 歌曲和歌单分别加载：歌单接口异常不能吞掉已成功返回的电台歌曲。
   return Promise.all([
-    guessSongs(limit).catch(function () { return []; }),
+    // Playlist-card settings must not shrink the three-row recommendation carousel.
+    guessSongs(30).catch(function () { return []; }),
     homePlaylists(args).catch(function () { return {playlists:[]}; })
   ]).then(function (both) { return {songs:both[0], playlists:both[1].playlists || []}; });
 }

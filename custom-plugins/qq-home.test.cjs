@@ -39,6 +39,36 @@ test('denied radio never fabricates music or consumes playlist content as songs'
   const result=await p.home({limit:12});assert.equal(result.songs.length,0);
 });
 
+test('radio recommendations fill ten three-row groups even when the service caps each batch',async()=>{
+  let calls=0;
+  const p=plugin(body=>{
+    if(!body.guess)throw Error('playlist endpoint offline');
+    const excluded=body.guess.param.song_ids;
+    assert.equal(excluded.length,calls*5);
+    assert.equal(body.guess.param.num,30);
+    const start=calls++*5;
+    return {guess:{code:0,data:{tracks:Array.from({length:5},(_,i)=>({track_info:{mid:'r'+(start+i),id:start+i+1,title:'Radio '+(start+i)}}))}}};
+  });
+  const result=await p.home({limit:3});
+  assert.equal(result.songs.length,30);assert.equal(calls,6);
+  assert.equal(result.songs[29].id,'r29');
+});
+
+test('repeated batches stop without padding duplicates; later network failures preserve real results',async()=>{
+  let calls=0;
+  const p=plugin(body=>{
+    if(!body.guess)throw Error('playlist endpoint offline');calls++;
+    return {guess:{data:{tracks:[{mid:'same',title:'one real song'}]}}};
+  });
+  assert.equal((await p.home({limit:12})).songs.length,1);assert.equal(calls,2);
+  let attempts=0;
+  const broken=plugin(body=>{
+    if(!body.guess || attempts++>0)throw Error('network failed');
+    return {guess:{data:{tracks:[{mid:'real',title:'real song'}]}}};
+  });
+  assert.equal((await broken.home({limit:12})).songs[0].id,'real');
+});
+
 
 test('1018 favorites advance by actual page size, reuse complete metadata and retain exact playlist order',async()=>{
   const offsets=[];let details=0;

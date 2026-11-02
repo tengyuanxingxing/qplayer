@@ -118,6 +118,8 @@ public final class QPlayerActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        if ("dev.t1m3.qplayer.INSTALL_UPDATE".equals(getIntent().getAction()))
+            UpdateDownloads.requestInstall(getApplicationContext());
         logSceneLifecycle("create");
         activeUiToken = uiToken;
 
@@ -142,10 +144,7 @@ public final class QPlayerActivity extends Activity {
         java.util.concurrent.CompletableFuture<PlayerController> initialization =
                 ENGINE.getOrStart(() -> {
                     dev.t1m3.qplayer.store.AppDirs.migrateLegacyLayout();
-                    java.io.File updates = new java.io.File(app.getExternalFilesDir(null), "updates");
-                    dev.t1m3.qplayer.util.Logger.info("updates cache: {} bytes before sweep",
-                            dirSizeBytes(updates));
-                    deleteRecursive(updates);
+                    // System-owned update downloads must survive engine/process recreation.
                     deleteRecursive(dev.t1m3.qplayer.store.AppDirs.cacheDir()
                             .resolve("plugin-imports").toFile());
                     try {
@@ -463,88 +462,46 @@ public final class QPlayerActivity extends Activity {
         }
     }
 
-    /** Download the update APK to app storage with progress, trying each candidate url
-     *  (fastest mirror first, then the direct github url) until one succeeds, then hand
-     *  it to the system package installer. Off the main thread. */
-    private void downloadAndInstallUpdate(String[] urls) {
-        new Thread(() -> {
-            java.io.File out = new java.io.File(getExternalFilesDir(null), "updates/qplayer-update.apk");
-            java.io.File dir = out.getParentFile();
-            if (dir != null) dir.mkdirs();
-            for (String url : urls) {
-                if (downloadOne(url, out)) {
-                    controller.setUpdateProgress(100);
-                    runOnUiThread(() -> installApk(out));
-                    return;
-                }
-                dev.t1m3.qplayer.util.Logger.warn("update source failed, trying next: {}", url);
-            }
-            controller.setUpdateProgress(-2);
-        }, "qplayer-update-dl").start();
-    }
-
-    /** Download a single url into {@code out}, reporting progress; false on any failure
-     *  (so the caller can try the next mirror). */
-    private boolean downloadOne(String url, java.io.File out) {
-        java.net.HttpURLConnection conn = null;
-        try {
-            conn = (java.net.HttpURLConnection) new java.net.URL(url).openConnection();
-            conn.setInstanceFollowRedirects(true);
-            conn.setConnectTimeout(15_000);
-            conn.setReadTimeout(30_000);
-            conn.setRequestProperty("User-Agent", "qplayer-updater");
-            int code = conn.getResponseCode();
-            if (code >= 400) return false;
-            int total = conn.getContentLength();
-            try (InputStream in = conn.getInputStream();
-                 java.io.FileOutputStream fos = new java.io.FileOutputStream(out)) {
-                byte[] buf = new byte[16384];
-                long read = 0;
-                int n;
-                int lastPct = -1;
-                while ((n = in.read(buf)) > 0) {
-                    fos.write(buf, 0, n);
-                    read += n;
-                    if (total > 0) {
-                        int pct = (int) (read * 100 / total);
-                        if (pct != lastPct) {
-                            lastPct = pct;
-                            controller.setUpdateProgress(pct);
-                        }
-                    }
-                }
-            }
-            return out.length() > 0 && isCompatibleUpdateApk(out);
-        } catch (Throwable e) {
-            dev.t1m3.qplayer.util.Logger.warn("update download failed {}: {}", url, e.toString());
-            return false;
-        } finally {
-            if (conn != null) conn.disconnect();
+    private boolean updateUiResumed;
+    private boolean updateStatusPending;
+    private final android.os.Handler updateHandler = new android.os.Handler(android.os.Looper.getMainLooper());
+    private final Runnable updatePoll = new Runnable() {
+        @Override public void run() {
+            if (!updateUiResumed || destroyed || updateStatusPending) return;
+            updateStatusPending = true;
+            Context app = getApplicationContext();
+            UpdateDownloads.IO.execute(() -> {
+                UpdateDownloads.Status status = UpdateDownloads.inspect(app);
+                runOnUiThread(() -> {
+                    updateStatusPending = false;
+                    if (!updateUiResumed || destroyed) return;
+                    if (controller != null) controller.setUpdateProgress(status.progress);
+                    if (status.ready != null && UpdateDownloads.needsInstall(app) && controller != null)
+                        installApk(status.ready);
+                    if (status.progress >= 0 && (status.ready == null || UpdateDownloads.needsInstall(app)))
+                        updateHandler.postDelayed(updatePoll, 1000);
+                });
+            });
         }
-    }
+    };
 
-    private boolean isCompatibleUpdateApk(java.io.File archive) {
-        try {
-            android.content.pm.PackageManager pm=getPackageManager();
-            int flags=Build.VERSION.SDK_INT>=28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
-                    : android.content.pm.PackageManager.GET_SIGNATURES;
-            android.content.pm.PackageInfo current=pm.getPackageInfo(getPackageName(),flags);
-            android.content.pm.PackageInfo candidate=pm.getPackageArchiveInfo(archive.getAbsolutePath(),flags);
-            if(candidate==null) return false;
-            long before=Build.VERSION.SDK_INT>=28?current.getLongVersionCode():current.versionCode;
-            long after=Build.VERSION.SDK_INT>=28?candidate.getLongVersionCode():candidate.versionCode;
-            return UpdatePackagePolicy.compatible(current.packageName,before,apkSigners(current),
-                    candidate.packageName,after,apkSigners(candidate));
-        } catch(Exception ignored) {return false;}
-    }
-
-    private static byte[][] apkSigners(android.content.pm.PackageInfo info) {
-        android.content.pm.Signature[] certs=Build.VERSION.SDK_INT>=28 && info.signingInfo!=null
-                ? info.signingInfo.getApkContentsSigners() : info.signatures;
-        if(certs==null) return new byte[0][];
-        byte[][] encoded=new byte[certs.length][];
-        for(int i=0;i<certs.length;i++) encoded[i]=certs[i].toByteArray();
-        return encoded;
+    private void downloadAndInstallUpdate(String[] urls) {
+        Context app = getApplicationContext();
+        UpdateDownloads.IO.execute(() -> {
+            try {
+                UpdateDownloads.start(app, urls);
+                runOnUiThread(() -> {
+                    if (updateUiResumed && !destroyed) {
+                        updateHandler.removeCallbacks(updatePoll);
+                        updateHandler.post(updatePoll);
+                    }
+                });
+            }
+            catch (RuntimeException e) {
+                dev.t1m3.qplayer.util.Logger.warn("start update failed: {}", e.toString());
+                if (controller != null) controller.setUpdateProgress(-2);
+            }
+        });
     }
 
     /** A downloaded APK awaiting the "install unknown apps" grant; onResume retries it
@@ -554,6 +511,7 @@ public final class QPlayerActivity extends Activity {
     /** Launch the system package installer for the downloaded APK, requesting the
      *  unknown-sources grant first when needed (Android O+). */
     private void installApk(java.io.File apk) {
+        if (pendingInstallApk != null) return;
         if (Build.VERSION.SDK_INT >= 26 && !getPackageManager().canRequestPackageInstalls()) {
             // Park the APK and send the user to grant the permission; onResume resumes
             // the install when they come back, so they needn't re-download.
@@ -573,7 +531,14 @@ public final class QPlayerActivity extends Activity {
     }
 
     private void doInstallApk(java.io.File apk) {
+        // Recheck immediately before handing off. A mismatched/stale file is never installed.
+        if (!UpdateDownloads.validReady(getApplicationContext(), apk)) {
+            controller.setUpdateProgress(-2);
+            UpdateDownloads.delivered(getApplicationContext());
+            return;
+        }
         try {
+            UpdateDownloads.delivered(getApplicationContext());
             android.net.Uri uri = androidx.core.content.FileProvider.getUriForFile(
                     this, getPackageName() + ".fileprovider", apk);
             startActivity(new Intent(Intent.ACTION_VIEW)
@@ -1165,11 +1130,16 @@ public final class QPlayerActivity extends Activity {
     protected void onPause() {
         super.onPause();
         if (glView != null) glView.onPause();
+        updateUiResumed = false;
+        updateHandler.removeCallbacks(updatePoll);
     }
 
     @Override
     protected void onResume() {
         super.onResume();
+        updateUiResumed = true;
+        updateHandler.removeCallbacks(updatePoll);
+        updateHandler.post(updatePoll);
         if (glView != null) glView.onResume();
         // System overlays (permission dialogs, PiP, the install grant) can reset the
         // bar visibility; re-apply the immersive state (and re-sync the insets).
@@ -1206,9 +1176,19 @@ public final class QPlayerActivity extends Activity {
     }
 
     @Override
+    protected void onNewIntent(Intent intent) {
+        super.onNewIntent(intent);
+        setIntent(intent);
+        if ("dev.t1m3.qplayer.INSTALL_UPDATE".equals(intent.getAction()))
+            UpdateDownloads.requestInstall(getApplicationContext());
+    }
+
+    @Override
     protected void onDestroy() {
         logSceneLifecycle("destroy");
         destroyed = true;
+        updateUiResumed = false;
+        updateHandler.removeCallbacks(updatePoll);
         boolean ownsUi = boundUiToken == uiToken;
         if (ownsUi) boundUiToken = null;
         if (activeUiToken == uiToken && !isChangingConfigurations()) activeUiToken = null;

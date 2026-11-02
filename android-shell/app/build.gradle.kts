@@ -16,8 +16,8 @@ android {
         applicationId = "dev.t1m3.qplayer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 113
-        versionName = "1.9.14-custom"
+        versionCode = 114
+        versionName = "1.9.15-custom"
         manifestPlaceholders["appLabel"] = "QPlayer"
     }
 
@@ -25,6 +25,8 @@ android {
         sourceCompatibility = JavaVersion.VERSION_1_8
         targetCompatibility = JavaVersion.VERSION_1_8
     }
+
+    testOptions { unitTests.isIncludeAndroidResources = true }
 
     // Release signing is driven by env vars so the keystore never lives in the repo.
     // CI decodes a base64 keystore secret to a file and exports QPLAYER_KEYSTORE; a
@@ -199,4 +201,5 @@ dependencies {
     implementation("io.github.proify.lyricon:provider:0.1.70")
 
     testImplementation("junit:junit:4.13.2")
+    testImplementation("org.robolectric:robolectric:4.14.1")
 }

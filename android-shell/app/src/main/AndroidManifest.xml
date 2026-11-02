@@ -102,6 +102,14 @@
         </provider>
 
         <!-- Routes hardware / bluetooth media buttons to the session. -->
+        <receiver android:name="dev.t1m3.qplayer.android.ui.UpdateDownloadReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
+                <action android:name="android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED" />
+            </intent-filter>
+        </receiver>
+
         <receiver
             android:name="androidx.media.session.MediaButtonReceiver"
             android:exported="true">

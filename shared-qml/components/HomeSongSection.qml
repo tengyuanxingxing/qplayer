@@ -26,10 +26,11 @@ Item {
     Text { x:20;y:62;width:parent.width-40;visible:section.songs.length===0;text:"暂未返回歌曲，刷新后重试";font.pixelSize:13;color:Theme.color.onSurfaceVariantSummary }
     Flickable {
         id:horizontal
+        objectName:"homeSongCarousel"
         x:0;y:60;width:parent.width;height:Math.min(3,section.songs.length)*76
         clip:true;contentHeight:height
         property real columnWidth:Math.min(420,width-26)
-        contentWidth:Math.max(width,Math.ceil(section.songs.length/3)*columnWidth+12)
+        contentWidth:Math.max(width,Math.ceil(section.songs.length/3)*columnWidth+24)
         Repeater {
             model:section.pageActive?section.songs:null
             windowStart:Math.max(0,Math.floor(horizontal.contentX/horizontal.columnWidth)*3-3)

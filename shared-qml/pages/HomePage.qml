@@ -35,7 +35,7 @@ Item {
         HomeSongSection {
             id:daily
             x:0;y:hero.y+hero.height+(hero.visible?30:0);width:scroll.width
-            title:"猜你喜欢";subtitle:player.qqGuessStatus;songs:page.songs||[];kind:"qq";pageActive:page.visible
+            title:"猜你喜欢";subtitle:player.qqGuessStatus+(page.songs.length>0?" · "+page.songs.length+"首":"");songs:page.songs||[];kind:"qq";pageActive:page.visible
         }
         HomeSongSection {
             id:hearts
