@@ -31,11 +31,12 @@ Rectangle {
     }
     property bool albumsTab:false
     onAlbumsTabChanged: {
-        if(page.albumsTab)player.refreshFavoriteAlbums()
-        if(!collectionPager.moving)collectionPager.setScrollTarget(page.albumsTab?collectionPager.width:0,0)
+        if(page.albumsTab)player.ensureFavoriteAlbumsLoaded()
     }
     property string albumsSourceWatch:player.unifiedFavoritesSource
-    onAlbumsSourceWatchChanged:if(page.albumsTab)player.refreshFavoriteAlbums()
+    onAlbumsSourceWatchChanged:if(page.albumsTab)player.ensureFavoriteAlbumsLoaded()
+    property var accountsWatch:player.sourceAccounts
+    onAccountsWatchChanged:if(page.albumsTab)player.ensureFavoriteAlbumsLoaded()
     property string filterText: ""
     property var filteredTracks: {
         var all = player.openSourcePlaylistId !== ""
@@ -228,14 +229,15 @@ Rectangle {
             onTabSelected:(index)=>page.albumsTab=(index===1)
         }
 
-        Flickable {
+        TwoPagePager {
             id:collectionPager
             objectName:"collectionSwipePager"
             Layout.fillWidth:true;Layout.fillHeight:true
-            clip:true;contentWidth:page.favorites?width*2:width;contentHeight:height
-            flickableDirection:"HorizontalFlick";interactive:page.favorites
-            onMovingChanged:if(!moving && page.favorites){page.albumsTab=contentX>width/2;setScrollTarget(page.albumsTab?width:0,0)}
-            onWidthChanged:setScrollTarget(page.albumsTab?width:0,0)
+            contentWidth:page.favorites?width*2:width
+            interactive:page.favorites
+            pageActive:page.visible
+            pageIndex:page.albumsTab?1:0
+            onPageIndexChanged:page.albumsTab=(pageIndex===1)
 
             VirtualSongList {
                 id: tracks

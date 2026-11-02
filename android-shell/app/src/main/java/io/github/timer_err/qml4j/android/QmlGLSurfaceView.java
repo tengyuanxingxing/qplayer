@@ -330,16 +330,35 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         activeTouchPointerId = MotionEvent.INVALID_POINTER_ID;
         systemGestureStream = false;
         if (disposed) return;
-        queueEvent(() -> {
-            lyGrab = false; lyMoved = false;
+        queueEvent(this::cancelTouchOnGlThread);
+    }
+
+    /** Cancel is a scene mutation just like move/up. Flush its QML canceled
+     * handlers before pausing so a partial pager can settle on resume, without
+     * synthesizing a pointer-up (which could activate the song under a finger). */
+    private void cancelTouchOnGlThread() {
+        DirtyQueue dq = view == null ? null : view.dirtyQueue();
+        boolean ownBatch = dq != null && DirtyQueue.current() != dq;
+        if (ownBatch) dq.install();
+        try {
+            lyGrab = false; lyMoved = false; lyCanScroll = false;
+            lyInfoCanceled = false; lyTapTime = -1L; lyDismissSpeed = 0f;
+            pageGesture.begin(0f, 0f);
             if (controller != null) {controller.finishPlaybackDrag(0);controller.cancelPlaybackDismiss();}
             compositor.lyricRenderer().scrollCancel();
             if (view != null) view.dispatchPointerCancel();
-        });
+        } finally {
+            if (ownBatch) {
+                try { dq.flush(); }
+                finally { dq.uninstall(); }
+            }
+            wakeRenderer();
+        }
     }
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
         if (!focused && compositor != null) cancelTouchStream();
+        if (focused && !pauseRequested && !disposed) wakeRenderer();
         if (highRefresh != null) highRefresh.refresh();
     }
 
@@ -348,6 +367,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         if (!pauseRequested && !disposed) { highRefresh.resume(); framePump.resume(); }
     }
     @Override protected void onDetachedFromWindow() {
+        cancelTouchStream();
         highRefresh.pause();
         framePump.pause();
         super.onDetachedFromWindow();
@@ -355,6 +375,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
+        if (disposed || pauseRequested) return true;
         int action = ev.getActionMasked();
         if (action == MotionEvent.ACTION_DOWN) {
             systemGestureStream = inBottomSystemGestureZone(ev);
@@ -421,12 +442,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     private void dispatchTouchEvent(MotionEvent event, int pointerIndex, int action) {
         if (action == MotionEvent.ACTION_CANCEL) {
-            if (controller != null) {controller.finishPlaybackDrag(0);controller.cancelPlaybackDismiss();}
-            if (lyGrab) {
-                lyGrab = false;
-                if (lyMoved) compositor.lyricRenderer().scrollCancel();
-            }
-            if (view != null) view.dispatchPointerCancel();
+            cancelTouchOnGlThread();
             return;
         }
         if (view == null) return;
@@ -771,7 +787,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             highRefresh.refresh();
             try {
                 if (view == null) {
-                    view = bundle.configure(QmlView.withStockTypes(engine), resources);
+                    view = bundle.configure(dev.t1m3.qplayer.qml.QPlayerQmlTypes.newView(engine), resources);
                     // Cache stable top-level QML subtrees as SkPictures. This must be
                     // enabled before load() so every constructed Item participates in
                     // content invalidation; the lyric compositor also uses the cache-

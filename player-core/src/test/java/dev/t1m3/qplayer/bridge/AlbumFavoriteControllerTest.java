@@ -66,6 +66,21 @@ public class AlbumFavoriteControllerTest {
         }
     }
 
+    @Test public void repeatedCollectionTabSwitchesReuseEmptyAndLoadedResults() throws Exception {
+        int before=((Number)snapshot().get("albumLoads")).intValue();
+        controller.ensureFavoriteAlbumsLoaded();
+        controller.ensureFavoriteAlbumsLoaded();
+        await(()->!controller.favoriteAlbumsLoading.peek());
+        assertEquals(before+1,((Number)snapshot().get("albumLoads")).intValue());
+        controller.ensureFavoriteAlbumsLoaded();barrier();controller.pump();
+        assertEquals(before+1,((Number)snapshot().get("albumLoads")).intValue());
+        control("saved",true);
+        controller.refreshFavoriteAlbums();
+        await(()->!controller.favoriteAlbumsLoading.peek() && !controller.favoriteAlbums.peek().isEmpty());
+        controller.ensureFavoriteAlbumsLoaded();barrier();controller.pump();
+        assertEquals(before+2,((Number)snapshot().get("albumLoads")).intValue());
+    }
+
     @Test public void searchedAlbumCanBeFavoritedAndUnfavoritedWithConfirmedPluginState() throws Exception {
         controller.searchAlbums("Fixture");
         await(()->!controller.searchLoading.peek() && !controller.sourceSearchAlbumResults.peek().isEmpty());
@@ -168,14 +183,14 @@ public class AlbumFavoriteControllerTest {
         manifest.capabilities.addAll(Arrays.asList("searchAlbums","albumDetails","albumFavorite","favoriteAlbums","account","login"));
         manifest.permissions.add("credentials");
         byte[] json=new Gson().toJson(manifest).getBytes(StandardCharsets.UTF_8);
-        byte[] script=("var saved=false,signedOut=false,failure='',hold='',pending=[],writes=0,lastWrite='';"
+        byte[] script=("var saved=false,signedOut=false,failure='',hold='',pending=[],writes=0,lastWrite='',albumLoads=0;"
             +"function album(){return {id:'a1',name:'Fixture album',company:'Fixture Records',description:'Full introduction',releaseType:'专辑',releaseTypeLabel:'录音室版',publishTimeMs:1577894400000,songs:[]};}"
             +"module.exports={handlers:{"
             +"account:function(){return signedOut?{loggedIn:false}:{loggedIn:true,id:'offline',displayName:'Fixture user'};},"
             +"login:function(a){if(a.operation==='methods')return [];if(a.operation==='logout')signedOut=true;return true;},"
             +"searchAlbums:function(){return {items:[album()],nextCursor:''};},"
             +"albumDetails:function(a){if(a.id!=='a1')throw new Error('wrong native album id');return album();},"
-            +"favoriteAlbums:function(){return {items:saved?[album()]:[],nextCursor:''};},"
+            +"favoriteAlbums:function(){albumLoads++;return {items:saved?[album()]:[],nextCursor:''};},"
             +"albumFavorite:function(a){if(a.id!=='a1')throw new Error('wrong native album id');"
             +"if(a.operation!=='status'){writes++;lastWrite=a.operation;"
             +"if(failure==='throw')throw new Error('platform refused write');"
@@ -184,7 +199,7 @@ public class AlbumFavoriteControllerTest {
             +"control:function(a){if(a.hold)hold=a.hold;if(a.failure)failure=a.failure;"
             +"if(Object.prototype.hasOwnProperty.call(a,'saved'))saved=a.saved;"
             +"if(a.release){var callbacks=pending;pending=[];callbacks.forEach(function(f){f();});}"
-            +"return {saved:saved,pending:pending.length,writes:writes,lastWrite:lastWrite};}}};")
+            +"return {saved:saved,pending:pending.length,writes:writes,lastWrite:lastWrite,albumLoads:albumLoads};}}};")
             .getBytes(StandardCharsets.UTF_8);
         Map<String,String> hashes=new LinkedHashMap<>(); hashes.put("plugin.json",hex(json)); hashes.put("main.js",hex(script));
         Path archive=base.resolve("fixture.qplug");

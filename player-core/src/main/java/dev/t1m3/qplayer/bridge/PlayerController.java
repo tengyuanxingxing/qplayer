@@ -938,6 +938,35 @@ public final class PlayerController {
     public final Property<Boolean> favoriteAlbumsLoading = new Property<>(false);
     public final Property<String> favoriteAlbumsStatus = new Property<>("");
     private final AtomicLong favoriteAlbumsGeneration = new AtomicLong();
+    private String favoriteAlbumsCacheScope;
+
+    private String favoriteAlbumsScope() {
+        String playlistKey = openSourcePlaylistId.peek();
+        String source = UnifiedFavorites.ID.equals(playlistKey) ? unifiedFavoritesSource.peek()
+                : (playlistKey.indexOf(':') > 0 ? playlistKey.substring(0,playlistKey.indexOf(':')) : "");
+        StringBuilder key = new StringBuilder(source);
+        for (PluginManifest manifest : pluginManager.enabledProviders()) {
+            if ((source.isEmpty() || source.equals(manifest.id))
+                    && manifest.capabilitySet().contains(ProviderCapability.FAVORITE_ALBUMS))
+                key.append('|').append(manifest.id).append('@').append(manifest.version)
+                        .append(':').append(providerLoggedIn(manifest.id));
+        }
+        return key.toString();
+    }
+
+    private void invalidateFavoriteAlbumsCache() {
+        favoriteAlbumsCacheScope = null;
+        favoriteAlbumsGeneration.incrementAndGet();
+        favoriteAlbumsLoading.set(false);
+    }
+
+    /** A tab switch reuses the current account collection, including an empty result. */
+    public void ensureFavoriteAlbumsLoaded() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (!favoriteAlbumsScope().equals(favoriteAlbumsCacheScope)) refreshFavoriteAlbums();
+        }
+    }
+
 
     public boolean isFavoritesPlaylist(String key) {
         synchronized (QmlRuntimeLock.MONITOR) {
@@ -956,7 +985,11 @@ public final class PlayerController {
             final String playlistKey=openSourcePlaylistId.peek();
             final String source=UnifiedFavorites.ID.equals(playlistKey) ? unifiedFavoritesSource.peek()
                     : (playlistKey.indexOf(':')>0?playlistKey.substring(0,playlistKey.indexOf(':')):"");
-            favoriteAlbums.set(Collections.<Album>emptyList());
+            final String scope=favoriteAlbumsScope();
+            final boolean sameScope=scope.equals(favoriteAlbumsCacheScope);
+            final List<Album> previous=sameScope?favoriteAlbums.peek():Collections.<Album>emptyList();
+            favoriteAlbumsCacheScope=scope;
+            if(!sameScope)favoriteAlbums.set(Collections.<Album>emptyList());
             final Map<String,List<Album>> slices=new LinkedHashMap<>();
             final List<String> messages=new ArrayList<>();
             final List<PluginManifest> providers=new ArrayList<>();
@@ -967,10 +1000,12 @@ public final class PlayerController {
             favoriteAlbumsStatus.set(providers.isEmpty()?"请登录支持收藏专辑的音源":"正在加载收藏专辑…");
             final int[] pending={providers.size()};
             for(PluginManifest manifest:providers) {
-                slices.put(manifest.id,Collections.<Album>emptyList());
+                List<Album> existing=new ArrayList<>();
+                for(Album album:previous)if(album.id.startsWith(manifest.id+":"))existing.add(album);
+                slices.put(manifest.id,existing);
                 collectFavoriteAlbums(manifest.id,"",new LinkedHashMap<String,Album>(),new HashSet<String>(),0)
                     .whenComplete((albums,error)->post(()->{
-                        if(generation!=favoriteAlbumsGeneration.get() || !playlistKey.equals(openSourcePlaylistId.peek()))return;
+                        if(generation!=favoriteAlbumsGeneration.get())return;
                         if(error!=null)messages.add(manifest.name+"：加载失败，请检查登录后重试");
                         else if(providerLoggedIn(manifest.id))slices.put(manifest.id,albums);
                         List<Album> all=new ArrayList<>();for(List<Album> slice:slices.values())all.addAll(slice);
@@ -1006,6 +1041,7 @@ public final class PlayerController {
         List<Song> all=FavoritesMix.order(favoritesBySource,favoritePreferredSource.peek(),favoriteMix);
         publishMixSetting();
         unifiedFavoritesCount.set(all.size());
+        if(homeRequested && !homeHeartInitialized)refreshHeartExplore();
         if (!UnifiedFavorites.ID.equals(openSourcePlaylistId.peek())) return;
         String source = unifiedFavoritesSource.peek();
         List<Song> rows = source.isEmpty() ? all : favoritesBySource.get(source);
@@ -1419,7 +1455,7 @@ public final class PlayerController {
         loadMyPlaylists();
         refreshPluginLiked();
         refreshSourceAccounts();
-        if (!primary.isEmpty()) loadHome();
+        if (!primary.isEmpty() || homeRequested) ensureHomeLoaded();
     }
 
     /**
@@ -1480,6 +1516,7 @@ public final class PlayerController {
                 }
                 sourceAccountsBySource.put(providerId, row);
                 publishSourceAccounts();
+                observeHomeAccount(providerId, account);
             }));
         }
     }
@@ -1607,6 +1644,7 @@ public final class PlayerController {
 
     /** Reset everything published on behalf of the source that is no longer primary. */
     private void clearSourceScopedContent() {
+        invalidateHomeRecommendations();
         clearHomeSections();
         sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
         sourceRecommendations.set(Collections.<Song>emptyList());
@@ -8418,6 +8456,59 @@ public final class PlayerController {
      *  sections it also returns are extra and are not counted against this. */
     private volatile int homePlaylistLimit = 12;
     private boolean homeRequested;
+    private boolean homeSnapshotInitialized;
+    private boolean homeHeartInitialized;
+    private boolean homePlaybackInitialized;
+    private String homeSourceSnapshot = "";
+    private int homePendingContributions;
+    private final Map<String,String> homeAccountSnapshots = new LinkedHashMap<>();
+
+    private String homeSourceKey() {
+        List<String> versions=new ArrayList<>();
+        for(PluginManifest manifest:pluginManager.enabledProviders()) versions.add(manifest.id+"@"+manifest.version);
+        Collections.sort(versions);
+        return pluginRegistry.primaryProvider()+"|"+String.join(",",versions)+"|"+homePlaylistLimit;
+    }
+
+    /** Navigation reuses the current process's recommendation batch, including in-flight work. */
+    public void ensureHomeLoaded() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if(!homeSnapshotInitialized || !homeSourceSnapshot.equals(homeSourceKey()))loadHome();
+            if(!homeHeartInitialized)refreshHeartExplore();
+            if(!homePlaybackInitialized) { homePlaybackInitialized=true;refreshPlaybackInfo(); }
+        }
+    }
+
+    private void invalidateHomeRecommendations() {
+        homeSnapshotInitialized=false;homeHeartInitialized=false;homePlaybackInitialized=false;
+        homeGeneration.incrementAndGet();qqGuessGeneration.incrementAndGet();++heartExploreGeneration;
+        homePendingContributions=0;homeLoading.set(false);
+        qqGuessSongs.set(Collections.<Song>emptyList());qqDailySongs.set(Collections.<Song>emptyList());
+        sourceRecommendations.set(Collections.<Song>emptyList());sourceRecommendPlaylists.set(Collections.<Playlist>emptyList());
+        clearHomeSections();heartExploreSongs.set(Collections.<Song>emptyList());
+        ++playbackInfoGeneration;playbackInfoMediaId="";playbackInfoRequestedAt=0L;
+        playbackRelatedSongs.set(Collections.<Song>emptyList());
+    }
+
+    /** Initial account discovery does not repeat an already-authenticated plugin home request. */
+    private void observeHomeAccount(String provider,AccountProfile account) {
+        if(account==null)return;
+        String next=account.loggedIn?orEmpty(account.id):"";
+        String previous=homeAccountSnapshots.put(provider,next);
+        if(previous!=null && !previous.equals(next)) {
+            invalidateFavoriteAlbumsCache();
+            invalidateHomeRecommendations();
+            if(homeRequested)ensureHomeLoaded();
+        } else if(homeRequested && !homeHeartInitialized) {
+            refreshHeartExplore();
+        }
+    }
+
+    private void finishHomeContribution(long generation) {
+        if(generation!=homeGeneration.get())return;
+        homePendingContributions=Math.max(0,homePendingContributions-1);
+        if(homePendingContributions==0)homeLoading.set(false);
+    }
 
     public void setHomePlaylistLimit(int value) {
         synchronized (QmlRuntimeLock.MONITOR) {
@@ -8458,8 +8549,14 @@ public final class PlayerController {
     public void refreshHeartExplore() {
         synchronized (QmlRuntimeLock.MONITOR) {
             final long generation = ++heartExploreGeneration;
-            List<Song> favorites = UnifiedFavorites.merge(favoritesBySource.values(), favoritePreferredSource.peek());
+            List<List<Song>> currentFavorites=new ArrayList<>();
+            for(Map.Entry<String,List<Song>> source:favoritesBySource.entrySet()) {
+                String account=homeAccountSnapshots.get(source.getKey());
+                if(account!=null && !account.isEmpty() && account.equals(favoriteAccountIds.get(source.getKey())))currentFavorites.add(source.getValue());
+            }
+            List<Song> favorites = UnifiedFavorites.merge(currentFavorites, favoritePreferredSource.peek());
             if (favorites.isEmpty()) { heartExploreSongs.set(Collections.emptyList()); return; }
+            homeHeartInitialized=true;
             Song seed = favorites.get((heartExploreSeed++) % favorites.size());
             final MediaId id = MediaId.parse(seed.id);
             if (!pluginHasCapability(id.provider(), ProviderCapability.SEARCH_SONGS)) return;
@@ -8496,7 +8593,10 @@ public final class PlayerController {
 
     public void loadHome() {
         synchronized (QmlRuntimeLock.MONITOR) {
-            post(() -> homeLoading.set(true));
+            String sourceKey=homeSourceKey();
+            if(!homeSourceSnapshot.equals(sourceKey))invalidateHomeRecommendations();
+            homeSourceSnapshot=sourceKey;homeSnapshotInitialized=true;
+            homeLoading.set(true);
             // Switching away and back fast would otherwise let the first source's
             // in-flight result land on top of the second one's.
             final long generation = homeGeneration.incrementAndGet();
@@ -8505,19 +8605,19 @@ public final class PlayerController {
             final long guessGeneration = qqGuessGeneration.incrementAndGet();
             boolean hasQq = pluginManager.enabledProviders().stream()
                     .anyMatch(source -> "qq".equals(source.id) && source.capabilities.contains(ProviderCapability.HOME.wireName()));
+            boolean separateQq=hasQq && (provider==null || !"qq".equals(provider.id));
+            homePendingContributions=(provider!=null?1:0)+(separateQq?1:0);
             if (!hasQq) {
                 qqGuessSongs.set(Collections.<Song>emptyList());
                 qqGuessStatus.set("安装并启用 QQ 音乐插件后可获取个性电台");
                 qqDailySongs.set(Collections.<Song>emptyList());
                 qqDailyStatus.set("安装并启用 QQ 音乐插件后可获取每日30首");
             } else {
-                qqGuessSongs.set(Collections.<Song>emptyList());
-                qqDailySongs.set(Collections.<Song>emptyList());
                 qqGuessStatus.set("正在验证 QQ 账号并加载个性电台…");
                 qqDailyStatus.set("正在加载 QQ 每日30首…");
-                if (provider == null || !"qq".equals(provider.id))
+                if (separateQq)
                     pluginProviders.home("qq", homePlaylistLimit).whenComplete((home, error) ->
-                            post(() -> publishQqGuess(home, error, guessGeneration)));
+                            post(() -> {publishQqGuess(home, error, guessGeneration);finishHomeContribution(generation);}));
             }
             if (provider != null) {
                 pluginProviders
@@ -8530,7 +8630,7 @@ public final class PlayerController {
                                                     if (!provider.id.equals(
                                                             pluginRegistry.primaryProvider()))
                                                         return;
-                                                    homeLoading.set(false);
+                                                    finishHomeContribution(generation);
                                                     if ("qq".equals(provider.id)) publishQqGuess(home, error, guessGeneration);
                                                     if (error != null) {
                                                         Logger.warn(
@@ -8567,7 +8667,7 @@ public final class PlayerController {
 
             recommendations.set(Collections.<NeteaseSong>emptyList());
             recommendPlaylists.set(Collections.<NeteasePlaylist>emptyList());
-            homeLoading.set(false);
+            if(homePendingContributions==0)homeLoading.set(false);
             return;
         }
     }
@@ -10684,16 +10784,18 @@ public final class PlayerController {
         switch (challenge.status) {
             case "scanned": qrStatus.set(802); break;
             case "success":
+                invalidateFavoriteAlbumsCache();
                 stopLoginPoll();
                 qrStatus.set(803);
                 webLoginBusy.set(false);
                 webLoginError.set("");
                 webLoginSuccessRevision.set(webLoginSuccessRevision.peek() + 1L);
+                invalidateHomeRecommendations();
                 refreshPluginAccount(pendingPluginLoginProvider, challenge.account);
                 // The signed-in source may not be the primary one, and only this
                 // list can show it.
                 refreshSourceAccounts();
-                if (homeRequested) loadHome();
+                if (homeRequested) ensureHomeLoaded();
                 showToast(I18n.tr("toast.login.success"));
                 break;
             case "expired":
@@ -10759,6 +10861,7 @@ public final class PlayerController {
 
     private void publishPluginAccount(String provider, AccountProfile account) {
         if (account == null) return;
+        observeHomeAccount(provider,account);
         SourceAccountRow row = new SourceAccountRow();
         row.providerId = provider;
         row.sourceName = providerDisplayName(provider);
@@ -10845,6 +10948,9 @@ public final class PlayerController {
     /** 我的 and the liked hearts keep the other sources' data after one source
      *  signs out; only the leaving source's own slice goes away. */
     private void dropSourceUserData(String providerId) {
+        invalidateFavoriteAlbumsCache();
+        homeAccountSnapshots.put(providerId,"");
+        invalidateHomeRecommendations();
         if (openSourceAlbumId.peek().startsWith(providerId + ":")) {
             ++albumFavoriteGeneration;
             albumFavorite.set(false);

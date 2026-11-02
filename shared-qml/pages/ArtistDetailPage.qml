@@ -11,11 +11,22 @@ Rectangle {
     signal home()
     color: Theme.color.surface
     property bool albumsTab: false
+    property bool previousAlbumsTab:false
+    property real songScrollOffset:0
+    property real albumScrollOffset:0
+    onAlbumsTabChanged: {
+        if(page.previousAlbumsTab===page.albumsTab)return
+        if(page.previousAlbumsTab)page.albumScrollOffset=artistScroll.contentY
+        else page.songScrollOffset=artistScroll.contentY
+        page.previousAlbumsTab=page.albumsTab
+        var rowsHeight=page.albumsTab?page.albums.length*92+72:page.songs.length*64+72
+        artistScroll.contentY=Math.max(0,Math.min(page.albumsTab?page.albumScrollOffset:page.songScrollOffset,288+rowsHeight+page.bottomContentInset-artistScroll.height))
+    }
     property string albumFilter: "all"
     property string songQuery: ""
     property bool filtersOpen: false
     property string artistWatch: player.openSourceArtistId
-    onArtistWatchChanged: { albumsTab = false; albumFilter = "all"; songQuery = ""; filtersOpen = false }
+    onArtistWatchChanged: { albumsTab = false; albumFilter = "all"; songQuery = ""; filtersOpen = false; songScrollOffset=0;albumScrollOffset=0;artistScroll.contentY=0 }
     property var allSongs: player.openSourceArtistId !== "" ? player.sourceArtistSongs : player.artistSongs
     property var allAlbums: player.openSourceArtistId !== "" ? player.sourceArtistAlbums : player.artistAlbums
     property var songs: {
@@ -50,8 +61,9 @@ Rectangle {
         objectName:"artistDetailScroll"
         y:56;width:page.width;height:page.height-56;clip:true;contentWidth:width
         contentHeight:288+(page.albumsTab?page.albums.length*92+72:page.songs.length*64+72)+page.bottomContentInset
-        property string filterWatch:page.albumFilter+page.albumsTab
-        onFilterWatchChanged:contentY=Math.min(contentY,180)
+        property string filterWatch:page.albumFilter
+        onFilterWatchChanged:if(page.albumsTab)contentY=Math.min(contentY,180)
+        flickableDirection:"VerticalFlick"
         Rectangle {
             objectName:"artistHero"
             width:artistScroll.width;height:180;color:Theme.color.primaryContainer
@@ -79,10 +91,18 @@ Rectangle {
                 onClicked:page.filtersOpen=true
             }
         }
+        TwoPagePager {
+            id:artistPager
+            objectName:"artistSwipePager"
+            y:288;width:artistScroll.width
+            height:Math.max(page.songs.length*64+72,page.albums.length*92+72)
+            pageIndex:page.albumsTab?1:0
+            pageActive:page.visible
+            onPageIndexChanged:page.albumsTab=(pageIndex===1)
         VirtualSongList {
             id:tracks
-            y:288;width:artistScroll.width;height:page.songs.length*64+72
-            visible:!page.albumsTab;enabled:visible
+            y:0;width:artistPager.width;height:page.songs.length*64+72
+            visible:page.visible;enabled:visible
             // The outer viewport owns the gesture, so the hero and songs move together.
             scrollViewport: songViewport
             list:page.songs;showLikeButton:true
@@ -98,10 +118,10 @@ Rectangle {
         Item {
             id:albumList
             objectName:"artistAlbumList"
-            y:288;width:artistScroll.width;height:page.albums.length*92+72
-            visible:page.albumsTab;enabled:visible
+            x:artistPager.width;y:0;width:artistPager.width;height:page.albums.length*92+72
+            visible:page.visible;enabled:visible
             Repeater {
-                model:page.albumsTab?page.albums:null
+                model:page.visible?page.albums:null
                 windowStart:Math.max(0,Math.floor((artistScroll.contentY-288)/92)-2)
                 windowCount:Math.ceil(artistScroll.height/92)+5
                 Item {
@@ -118,6 +138,7 @@ Rectangle {
                 text:player.artistMoreLoading?"加载中…":"加载更多专辑";onClicked:player.loadMoreArtist("albums")
             }
             Text { x:20;y:30;visible:page.albums.length===0;text:page.albumFilter==="all"?"暂无专辑":"当前已加载专辑中没有此分类，可加载更多";width:parent.width-40;wrapMode:Text.Wrap;color:Theme.color.onSurfaceVariantSummary }
+        }
         }
         LoadingIndicator { x:parent.width/2-16;y:300;visible:player.artistLoading;running:visible }
     }

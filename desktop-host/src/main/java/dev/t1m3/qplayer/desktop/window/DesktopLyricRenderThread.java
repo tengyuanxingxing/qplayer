@@ -58,7 +58,7 @@ final class DesktopLyricRenderThread extends Thread {
             Item lockedControl;
             synchronized (QmlRuntimeLock.MONITOR) {
                 qmlBundle = new BundledQml("DesktopLyric.qml");
-                view = qmlBundle.configure(QmlView.withStockTypes(new QmlEngine(qmlBundle)), owner.resources());
+                view = qmlBundle.configure(dev.t1m3.qplayer.qml.QPlayerQmlTypes.newView(new QmlEngine(qmlBundle)), owner.resources());
                 // QmlView defaults picture caching to false. In qml4j 0.2.x the
                 // corresponding Item.contentCacheEnabled switch is unfortunately
                 // static, so constructing this second, otherwise independent view

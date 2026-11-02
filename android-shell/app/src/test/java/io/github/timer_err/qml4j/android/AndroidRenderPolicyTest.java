@@ -12,6 +12,19 @@ import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
 
 public class AndroidRenderPolicyTest {
+    @Test public void pageSnapAdmitsEveryFrameAndReturnsToIdle() {
+        Item root=new Item();
+        dev.t1m3.qplayer.qml.PageFlickable pager=new dev.t1m3.qplayer.qml.PageFlickable();
+        root.children.add(pager);pager.width.set(390);pager.height.set(500);pager.contentWidth.set(780);
+        pager.contentX.set(160f);long release=System.nanoTime();pager.startFling(0,0);
+        for(int frame=0;frame<11;frame++) {
+            pager.tick(release+frame*16_000_000L);
+            assertTrue("page snap must keep WHEN_DIRTY rendering without a playback clock",
+                AndroidRenderPolicy.shouldRenderContinuously(false,false,false,root));
+        }
+        pager.tick(release+240_000_000L);
+        assertFalse(AndroidRenderPolicy.shouldRenderContinuously(false,false,false,root));
+    }
     @Test
     public void runningAnimationKeepsIdleSurfaceAlive() {
         Item root = new Item();

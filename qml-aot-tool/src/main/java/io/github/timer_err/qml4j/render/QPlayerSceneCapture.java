@@ -25,7 +25,7 @@ public final class QPlayerSceneCapture {
             RhinoScope.registerContextProperty(name);
         }
         QmlEngine engine = new QmlEngine();
-        Loader loader = new Loader(engine, StockTypes.registry());
+        Loader loader = new Loader(engine, dev.t1m3.qplayer.qml.QPlayerQmlTypes.registry());
         loader.setResources(resources);
         CompilationRecorder recorder = new CompilationRecorder();
         Field recorderField = Loader.class.getDeclaredField("recorder");

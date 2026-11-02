@@ -195,7 +195,7 @@ public final class BundledQmlSmoke {
                               SettingsCore previousSettings, ClasspathResourceLoader resources) throws Exception {
         settings.setValue("darkMode", SettingsCatalog.MODE_LIGHT);
         try (BundledQml bundle = new BundledQml(entry)) {
-            QmlView view = bundle.configure(QmlView.withStockTypes(new QmlEngine(bundle)), path -> {
+            QmlView view = bundle.configure(dev.t1m3.qplayer.qml.QPlayerQmlTypes.newView(new QmlEngine(bundle)), path -> {
                 require(!path.endsWith(".qml"), "Runtime requested QML source: " + path);
                 return resources.load(path);
             });

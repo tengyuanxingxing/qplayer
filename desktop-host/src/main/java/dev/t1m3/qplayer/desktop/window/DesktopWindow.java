@@ -492,7 +492,7 @@ public final class DesktopWindow {
             return view;
         }
         lastSpawnWasRespawn = false;
-        QmlView v = qmlBundle.configure(QmlView.withStockTypes(engine), resources);
+        QmlView v = qmlBundle.configure(dev.t1m3.qplayer.qml.QPlayerQmlTypes.newView(engine), resources);
         try {
             // Keep settled subtree pictures; only live glass boundaries bypass them.
             v.renderer().setPictureCache(true);

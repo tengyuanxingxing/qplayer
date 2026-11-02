@@ -72,7 +72,7 @@ public final class QmlBundleCompiler {
         compile(resources, "DesktopLyric.qml", Collections.emptyList(), 1_000_000, files, reflectTypes);
         // qml4j 0.2.33 does not expose registry enumeration. Include stock types
         // with no generated subclass as well as the generated classes themselves.
-        TypeRegistry registry = StockTypes.registry();
+        TypeRegistry registry = dev.t1m3.qplayer.qml.QPlayerQmlTypes.registry();
         for (String fieldName : new String[]{"types", "singletons"}) {
             Field field = TypeRegistry.class.getDeclaredField(fieldName);
             field.setAccessible(true);
