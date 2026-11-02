@@ -36,6 +36,7 @@ import dev.t1m3.qplayer.netease.dto.NeteaseArtist;
 import dev.t1m3.qplayer.netease.dto.NeteaseLyric;
 import dev.t1m3.qplayer.netease.dto.NeteasePlaylist;
 import dev.t1m3.qplayer.netease.dto.NeteaseSong;
+import dev.t1m3.qplayer.playlist.UnifiedFavorites;
 import dev.t1m3.qplayer.playlist.LocalPlaylist;
 import dev.t1m3.qplayer.playlist.LocalPlaylistStore;
 import dev.t1m3.qplayer.playlist.MyPlaylistOrderStore;
@@ -798,6 +799,95 @@ public final class PlayerController {
     /** Counts for the account page header stats. Kept in sync with the
      *  liked-id set and the my-playlists list so QML binds an int, not a
      *  Java List length (which the engine doesn't expose to QML). */
+    private final UnifiedFavorites unifiedFavorites = new UnifiedFavorites();
+    private final AtomicLong favoritesGeneration = new AtomicLong();
+    private final Map<String, List<Song>> favoritesBySource = new LinkedHashMap<>();
+    public final Property<Integer> unifiedFavoritesCount = new Property<>(0);
+    public final Property<Boolean> unifiedFavoritesSyncing = new Property<>(false);
+    public final Property<String> unifiedFavoritesStatus = new Property<>("");
+    public final Property<String> unifiedFavoritesSource = new Property<>("");
+
+    public final Property<String> favoritePreferredSource = new Property<>(loadFavoritePreference());
+    private static String loadFavoritePreference() {
+        try { return "netease".equals(StorageFiles.readUtf8(AppDirs.configFile("favorite-source.txt")).trim()) ? "netease" : "qq"; }
+        catch (Exception ignored) { return "qq"; }
+    }
+    public void setFavoritePreferredSource(String provider) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            String selected = "netease".equals(provider) ? "netease" : "qq";
+            favoritePreferredSource.set(selected);
+            try { StorageFiles.writeUtf8Atomic(AppDirs.configFile("favorite-source.txt"), selected); }
+            catch (Exception ignored) {}
+            publishUnifiedFavorites();
+        }
+    }
+
+    public void setUnifiedFavoritesSource(String provider) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            unifiedFavoritesSource.set(provider == null ? "" : provider);
+            publishUnifiedFavorites();
+        }
+    }
+
+    private void publishUnifiedFavorites() {
+        List<Song> all = UnifiedFavorites.merge(favoritesBySource.values(), favoritePreferredSource.peek());
+        unifiedFavoritesCount.set(all.size());
+        if (!UnifiedFavorites.ID.equals(openSourcePlaylistId.peek())) return;
+        String source = unifiedFavoritesSource.peek();
+        List<Song> rows = source.isEmpty() ? all : favoritesBySource.get(source);
+        sourcePlaylistTracks.set(Collections.unmodifiableList(new ArrayList<>(
+                rows == null ? Collections.<Song>emptyList() : rows)));
+    }
+
+    public void refreshUnifiedFavorites() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            final long generation = favoritesGeneration.incrementAndGet();
+            List<PluginManifest> providers = new ArrayList<>();
+            for (PluginManifest manifest : pluginManager.enabledProviders()) {
+                if (manifest.capabilitySet().contains(ProviderCapability.LIKE)
+                        && manifest.capabilitySet().contains(ProviderCapability.ACCOUNT)
+                        && manifest.capabilitySet().contains(ProviderCapability.SONG_DETAILS)) providers.add(manifest);
+            }
+            Set<String> enabled = new java.util.LinkedHashSet<>();
+            for (PluginManifest manifest : providers) enabled.add(manifest.id);
+            favoritesBySource.keySet().retainAll(enabled);
+            publishUnifiedFavorites();
+            unifiedFavoritesSyncing.set(!providers.isEmpty());
+            unifiedFavoritesStatus.set(providers.isEmpty() ? "请启用并登录支持收藏的音源" : "正在同步各平台收藏…");
+            final int[] pending = {providers.size()};
+            final List<String> failures = new ArrayList<>();
+            for (PluginManifest manifest : providers) {
+                final String provider = manifest.id;
+                pluginAccounts.account(provider).thenCompose(account -> unifiedFavorites.load(
+                        provider, account, pluginProviders::likedSongs,
+                        ids -> pluginProviders.songsByIds(provider, ids)))
+                    .whenComplete((result, error) -> post(() -> {
+                        if (generation != favoritesGeneration.get()) return;
+                        if (error != null || result == null || result.stale) failures.add(manifest.name);
+                        if (result != null) {
+                            if (result.signedIn) {
+                                for (Song song : result.songs) song.favoriteSources = manifest.name;
+                                favoritesBySource.put(provider, result.songs);
+                                if (result.likedIds != null) pluginLikedBySource.put(provider, result.likedIds);
+                            }
+                            else {
+                                favoritesBySource.remove(provider);
+                                pluginLikedBySource.remove(provider);
+                            }
+                            publishPluginLiked();
+                        }
+                        publishUnifiedFavorites();
+                        if (--pending[0] == 0) {
+                            unifiedFavoritesSyncing.set(false);
+                            unifiedFavoritesStatus.set(failures.isEmpty()
+                                ? "已同步 · " + unifiedFavoritesCount.peek() + " 首 · 红心更新歌曲所属平台"
+                                : String.join("、", failures) + " 未完整更新，已保留可用收藏");
+                        }
+                    }));
+            }
+        }
+    }
+
     public final Property<Integer> likedCount = new Property<>(0);
     /** Monotonic counter bumped on every liked-set change. Search/queue rows
      *  bind {@code isMediaLiked()} (a plain method, not a Property), so qml4j
@@ -3633,9 +3723,134 @@ public final class PlayerController {
     }
 
     /** LyricOverlay.qml's manual lyrics/cover switch — see {@link #coverModeManual}. */
+    public final Property<Boolean> commentsOpen = new Property<>(false);
+    public final Property<Boolean> commentsLoading = new Property<>(false);
+    public final Property<Boolean> commentsHasMore = new Property<>(false);
+    public final Property<String> commentsTitle = new Property<>("");
+    public final Property<String> commentsStatus = new Property<>("");
+    public final Property<String> commentsSort = new Property<>("new");
+    public final Property<List<dev.t1m3.qplayer.media.SongComment>> songComments = new Property<>(Collections.emptyList());
+    private String commentsMediaId = "", commentsCursor = "";
+    private long commentsGeneration;
+
+    public void openCurrentComments() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            Track track = currentTrack();
+            commentsMediaId = track == null ? "" : track.canonicalId();
+            commentsTitle.set(title.peek() + " · 评论");
+            commentsOpen.set(true);
+            refreshComments();
+        }
+    }
+    public void closeComments() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            commentsOpen.set(false); commentsGeneration++; commentsLoading.set(false);
+        }
+    }
+    public void setCommentsSort(String sort) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            commentsSort.set("hot".equals(sort) ? "hot" : "new"); refreshComments();
+        }
+    }
+    public void refreshComments() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            commentsGeneration++; commentsLoading.set(false); commentsCursor = "";
+            songComments.set(Collections.emptyList()); commentsHasMore.set(true);
+            loadMoreComments();
+        }
+    }
+    public void loadMoreComments() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (commentsLoading.peek() || !commentsHasMore.peek() || !commentsOpen.peek()) return;
+            if (commentsMediaId.isEmpty()) { commentsStatus.set("播放歌曲后可查看评论"); commentsHasMore.set(false); return; }
+            final MediaId id;
+            try { id = MediaId.parse(commentsMediaId); }
+            catch (IllegalArgumentException e) { commentsStatus.set("本地歌曲暂无平台评论"); commentsHasMore.set(false); return; }
+            if (!pluginHasCapability(id.provider(), ProviderCapability.COMMENTS)) {
+                commentsStatus.set("当前音源暂不支持评论，请安装支持评论的音源插件");
+                commentsHasMore.set(false); return;
+            }
+            final long generation = commentsGeneration;
+            final String cursor = commentsCursor;
+            commentsLoading.set(true); commentsStatus.set("正在加载评论…");
+            pluginProviders.comments(id, cursor, commentsSort.peek()).whenComplete((page, error) -> post(() -> {
+                if (generation != commentsGeneration || !commentsOpen.peek()) return;
+                commentsLoading.set(false);
+                if (error != null) { commentsStatus.set("评论加载失败，请重试"); return; }
+                Map<String, dev.t1m3.qplayer.media.SongComment> rows = new LinkedHashMap<>();
+                for (dev.t1m3.qplayer.media.SongComment comment : songComments.peek()) rows.put(comment.id, comment);
+                for (dev.t1m3.qplayer.media.SongComment comment : page.items) rows.put(comment.id, comment);
+                songComments.set(Collections.unmodifiableList(new ArrayList<>(rows.values())));
+                commentsCursor = page.nextCursor;
+                commentsHasMore.set(!commentsCursor.isEmpty() && !commentsCursor.equals(cursor) && rows.size() < 500);
+                commentsStatus.set(rows.isEmpty() ? "暂无评论" : "已加载 " + rows.size() + " 条评论");
+            }));
+        }
+    }
+
+    public final Property<Integer> playbackPage = new Property<>(2);
+    public final Property<String> playbackAlbumId = new Property<>("");
+    public final Property<String> playbackAlbumName = new Property<>("");
+    public final Property<String> playbackRelease = new Property<>("");
+    public final Property<String> playbackCredits = new Property<>("");
+    public final Property<String> playbackGenre = new Property<>("");
+    public final Property<String> playbackInfoStatus = new Property<>("");
+    public final Property<List<Song>> playbackRelatedSongs = new Property<>(Collections.emptyList());
+    private long playbackInfoGeneration;
     public void setCoverMode(boolean on) {
         synchronized (QmlRuntimeLock.MONITOR) {
-            coverModeManual.set(on);
+            playbackPage.set(on ? 1 : 2); coverModeManual.set(on);
+        }
+    }
+    public void swipePlaybackPage(int direction) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            int next = Math.max(0, Math.min(2, playbackPage.peek() + (direction > 0 ? 1 : -1)));
+            playbackPage.set(next); coverModeManual.set(next != 2);
+            if (next == 0) refreshPlaybackInfo();
+        }
+    }
+    public void openPlaybackAlbum() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (playbackAlbumId.peek().isEmpty()) return;
+            setLyricsOpen(false); openMediaAlbum(playbackAlbumId.peek());
+        }
+    }
+    public void playPlaybackRelated(int index) {
+        synchronized (QmlRuntimeLock.MONITOR) { playPluginSongList(playbackRelatedSongs.peek(), index); }
+    }
+    private void publishPlaybackSongInfo(Song song) {
+        if (song == null) return;
+        playbackAlbumId.set(song.album == null ? "" : song.album.id);
+        playbackAlbumName.set(song.album == null ? "" : song.album.name);
+        playbackCredits.set(song.credits); playbackGenre.set(song.genre);
+        playbackRelease.set(song.publishTimeMs > 0 ? new java.text.SimpleDateFormat("yyyy-MM-dd", Locale.ROOT).format(new java.util.Date(song.publishTimeMs)) : "");
+    }
+    public void refreshPlaybackInfo() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            Track track = currentTrack(); final long generation = ++playbackInfoGeneration;
+            playbackAlbumId.set(""); playbackAlbumName.set(track == null || track.album == null ? "" : track.album);
+            playbackRelease.set(""); playbackCredits.set(""); playbackGenre.set("");
+            playbackRelatedSongs.set(Collections.emptyList()); playbackInfoStatus.set("");
+            if (track == null) return;
+            final String mediaId = track.canonicalId();
+            final MediaId id;
+            try { id = MediaId.parse(mediaId); } catch (Exception e) { return; }
+            publishPlaybackSongInfo(findPluginSong(mediaId));
+            if (pluginHasCapability(id.provider(), ProviderCapability.SONG_DETAILS))
+                pluginProviders.songsByIds(id.provider(), Collections.singletonList(mediaId)).whenComplete((songs, error) -> post(() -> {
+                    if (generation != playbackInfoGeneration || currentTrack() == null || !mediaId.equals(currentTrack().canonicalId())) return;
+                    if (error == null && songs != null && !songs.isEmpty()) publishPlaybackSongInfo(songs.get(0));
+                }));
+            if (pluginHasCapability(id.provider(), ProviderCapability.SEARCH_SONGS)) {
+                playbackInfoStatus.set("正在加载推荐歌曲…");
+                pluginProviders.searchSongs(id.provider(), track.artist, "", 20).whenComplete((page, error) -> post(() -> {
+                    if (generation != playbackInfoGeneration || currentTrack() == null || !mediaId.equals(currentTrack().canonicalId())) return;
+                    List<Song> rows = new ArrayList<>();
+                    if (error == null && page != null) for (Song song : page.items) if (!mediaId.equals(song.id)) rows.add(song);
+                    playbackRelatedSongs.set(Collections.unmodifiableList(rows));
+                    playbackInfoStatus.set(error == null ? (rows.isEmpty() ? "暂无更多推荐" : "") : "推荐加载失败，可稍后重试");
+                }));
+            }
         }
     }
 
@@ -5777,7 +5992,7 @@ public final class PlayerController {
                         && !lyrics.peek().isEmpty();
         if (!keepLyrics) {
             applyLyrics(Collections.emptyList());
-            coverModeManual.set(false);
+            // Keep the user's chosen page across track changes.
         }
         applyTrackLyricOffset(track);
         index.set(requestedIndex);
@@ -5815,6 +6030,7 @@ public final class PlayerController {
             return;
         }
         preloadAdjacent();
+        if (playbackPage.peek() == 0) refreshPlaybackInfo();
         notifyPlayback();
     }
 
@@ -7226,6 +7442,25 @@ public final class PlayerController {
     }
 
     /** Artist-mode counterpart to {@link #search}; see {@link #searchAlbums}. */
+    public final Property<List<Artist>> suggestedArtists = new Property<>(Collections.emptyList());
+    private long artistSuggestionsGeneration;
+    public void searchArtistSuggestions(String keyword) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            final String query = keyword == null ? "" : keyword.trim();
+            final long generation = ++artistSuggestionsGeneration;
+            suggestedArtists.set(Collections.emptyList());
+            if (query.isEmpty()) return;
+            List<PluginManifest> providers = providersWith(ProviderCapability.SEARCH_ARTISTS);
+            final List<Artist> found = new ArrayList<>();
+            for (PluginManifest manifest : providers) pluginProviders.searchArtists(manifest.id, query, "", 3)
+                .whenComplete((page, error) -> post(() -> {
+                    if (generation != artistSuggestionsGeneration || !query.equals(currentSearchQuery)) return;
+                    if (error == null && page != null) found.addAll(page.items);
+                    suggestedArtists.set(Collections.unmodifiableList(new ArrayList<>(found)));
+                }));
+        }
+    }
+
     public void searchArtists(String keyword) {
         synchronized (QmlRuntimeLock.MONITOR) {
             if (keyword == null || keyword.trim().isEmpty()) return;
@@ -7426,6 +7661,7 @@ public final class PlayerController {
     public void prepareSearch(String keyword) {
         synchronized (QmlRuntimeLock.MONITOR) {
             String query = keyword == null ? "" : keyword.trim();
+            artistSuggestionsGeneration++; suggestedArtists.set(Collections.emptyList());
             pluginSearchGeneration.incrementAndGet();
             pluginSearchByProvider.clear();
             pluginPlaylistSearchByProvider.clear();
@@ -7825,6 +8061,33 @@ public final class PlayerController {
     }
 
     /** Load the home content: recommended songs (login) + recommended playlists. */
+    public final Property<List<Song>> heartExploreSongs = new Property<>(Collections.emptyList());
+    public final Property<String> heartExploreReason = new Property<>("登录并同步收藏后，为你探索更多歌曲");
+    private long heartExploreGeneration;
+    private int heartExploreSeed;
+    public void playHeartExplore(int index) {
+        synchronized (QmlRuntimeLock.MONITOR) { playPluginSongList(heartExploreSongs.peek(), index); }
+    }
+    public void refreshHeartExplore() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            final long generation = ++heartExploreGeneration;
+            List<Song> favorites = UnifiedFavorites.merge(favoritesBySource.values(), favoritePreferredSource.peek());
+            if (favorites.isEmpty()) { heartExploreSongs.set(Collections.emptyList()); return; }
+            Song seed = favorites.get((heartExploreSeed++) % favorites.size());
+            final MediaId id = MediaId.parse(seed.id);
+            if (!pluginHasCapability(id.provider(), ProviderCapability.SEARCH_SONGS)) return;
+            heartExploreReason.set("根据收藏《" + seed.title + "》的歌手探索");
+            pluginProviders.searchSongs(id.provider(), seed.artist, "", 30).whenComplete((page, error) -> post(() -> {
+                if (generation != heartExploreGeneration) return;
+                List<Song> rows = new ArrayList<>();
+                if (error == null && page != null) for (Song song : page.items) if (!pluginLikedSet.contains(song.id)) rows.add(song);
+                heartExploreSongs.set(Collections.unmodifiableList(rows));
+                if (error != null) heartExploreReason.set("推荐加载失败，点刷新重试");
+                else if (rows.isEmpty()) heartExploreReason.set("暂无新的相近歌曲，可以刷新换一首红心歌曲探索");
+            }));
+        }
+    }
+
     public void loadHome() {
         synchronized (QmlRuntimeLock.MONITOR) {
             post(() -> homeLoading.set(true));
@@ -7931,6 +8194,9 @@ public final class PlayerController {
                 refs.add(ref);
             }
             if (refs.isEmpty()) return;
+            // Both the direct single-artist route and the picker must be above
+            // the separately composited playback layer.
+            if (Boolean.TRUE.equals(lyricsOpen.peek())) setLyricsOpen(false);
             // A single credit has no choice to make. Use the exact same entry point as
             // selecting an item from the multi-artist dialog, but skip the dialog and
             // its avatar request entirely.
@@ -7941,7 +8207,6 @@ public final class PlayerController {
             }
             // The lyric chrome is a separate host pass above Main.qml. A picker
             // opened while that layer is up is covered, so drop lyrics first.
-            if (Boolean.TRUE.equals(lyricsOpen.peek())) setLyricsOpen(false);
             songArtistPickerList.set(refs);
             songArtistPickerOpen.set(true);
             // A song's own artist credits carry no avatar (id/name only) -- fetch
@@ -8030,6 +8295,43 @@ public final class PlayerController {
     }
 
     /** Open an artist page: profile (name/avatar/bio) + hot songs + albums. */
+    public final Property<Boolean> artistMoreLoading = new Property<>(false);
+    public final Property<Boolean> artistSongsHasMore = new Property<>(false);
+    public final Property<Boolean> artistAlbumsHasMore = new Property<>(false);
+    private String artistSongsCursor = "", artistAlbumsCursor = "";
+    private long artistDataGeneration;
+    public void loadMoreArtist(String section) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (artistMoreLoading.peek() || openSourceArtistId.peek().isEmpty()) return;
+            final boolean albums = "albums".equals(section);
+            final String cursor = albums ? artistAlbumsCursor : artistSongsCursor;
+            if (cursor.isEmpty()) return;
+            final long generation = artistDataGeneration;
+            final MediaId id = MediaId.parse(openSourceArtistId.peek());
+            artistMoreLoading.set(true);
+            pluginProviders.artistPage(id, cursor, albums ? "albums" : "songs").whenComplete((artist, error) -> post(() -> {
+                if (generation != artistDataGeneration || !id.toString().equals(openSourceArtistId.peek())) return;
+                artistMoreLoading.set(false);
+                if (error != null) { showToast("加载失败，请重试"); return; }
+                if (albums) {
+                    Map<String, Album> rows = new LinkedHashMap<>();
+                    for (Album row : sourceArtistAlbums.peek()) rows.put(row.id, row);
+                    int oldSize = rows.size(); for (Album row : artist.albums) rows.put(row.id, row);
+                    sourceArtistAlbums.set(Collections.unmodifiableList(new ArrayList<>(rows.values())));
+                    artistAlbumsCursor = rows.size() > oldSize && !cursor.equals(artist.nextAlbumCursor) ? artist.nextAlbumCursor : "";
+                    artistAlbumsHasMore.set(!artistAlbumsCursor.isEmpty());
+                } else {
+                    Map<String, Song> rows = new LinkedHashMap<>();
+                    for (Song row : sourceArtistSongs.peek()) rows.put(row.id, row);
+                    int oldSize = rows.size(); for (Song row : artist.songs) rows.put(row.id, row);
+                    sourceArtistSongs.set(Collections.unmodifiableList(new ArrayList<>(rows.values())));
+                    artistSongsCursor = rows.size() > oldSize && !cursor.equals(artist.nextSongCursor) ? artist.nextSongCursor : "";
+                    artistSongsHasMore.set(!artistSongsCursor.isEmpty());
+                }
+            }));
+        }
+    }
+
     public void openMediaArtist(String mediaId) {
         synchronized (QmlRuntimeLock.MONITOR) {
             if (mediaId == null || mediaId.isEmpty()) return;
@@ -8047,6 +8349,9 @@ public final class PlayerController {
                 showToast(I18n.tr("toast.id.artist"));
                 return;
             }
+            final long generation = ++artistDataGeneration;
+            artistMoreLoading.set(false); artistSongsHasMore.set(false); artistAlbumsHasMore.set(false);
+            artistSongsCursor = ""; artistAlbumsCursor = "";
             openSourceArtistId.set(id.toString());
             openArtistId.set(0L);
             artistPageOpen.set(true);
@@ -8065,7 +8370,7 @@ public final class PlayerController {
                             (artist, error) ->
                                     post(
                                             () -> {
-                                                if (!id.toString()
+                                                if (generation != artistDataGeneration || !id.toString()
                                                         .equals(openSourceArtistId.peek())) return;
                                                 artistLoading.set(false);
                                                 if (error != null || artist == null) {
@@ -8078,6 +8383,10 @@ public final class PlayerController {
                                                                     "toast.artist.loadFailedPlugin"));
                                                     return;
                                                 }
+                                                artistSongsCursor = artist.nextSongCursor;
+                                                artistAlbumsCursor = artist.nextAlbumCursor;
+                                                artistSongsHasMore.set(!artistSongsCursor.isEmpty());
+                                                artistAlbumsHasMore.set(!artistAlbumsCursor.isEmpty());
                                                 artistName.set(artist.name);
                                                 artistCoverPath.set(artist.artworkUrl);
                                                 artistBriefDesc.set(artist.description);
@@ -8211,6 +8520,25 @@ public final class PlayerController {
     }
 
     private void loadMediaPlaylist(String mediaId, boolean refreshing) {
+        if (UnifiedFavorites.ID.equals(mediaId)) {
+            currentPlaylistId = 0L;
+            openPlaylistId.set(0L);
+            openSourcePlaylistId.set(UnifiedFavorites.ID);
+            playlistTitle.set("我喜欢 · 全部平台");
+            playlistCoverPath.set("");
+            playlistOwned.set(false);
+            playlistDeletable.set(false);
+            playlistSubscribed.set(false);
+            playlistLoading.set(false);
+            playlistOffline.set(false);
+            sourcePlaylistReorderable.set(false);
+            sourcePlaylistCoverAvailable.set(false);
+            sourceHeartRecommendationAvailable.set(false);
+            if (!refreshing) unifiedFavoritesSource.set("");
+            publishUnifiedFavorites();
+            refreshUnifiedFavorites();
+            return;
+        }
         if (mediaId == null || mediaId.isEmpty()) return;
         if (mediaId.indexOf(':') < 0) {
             try { openPlaylist(Long.parseLong(mediaId)); } catch (NumberFormatException ignored) {}
@@ -8379,6 +8707,7 @@ public final class PlayerController {
      */
     public void loadMyPlaylists() {
         synchronized (QmlRuntimeLock.MONITOR) {
+            refreshUnifiedFavorites();
             List<PluginManifest> providers = new ArrayList<>();
             String primary = pluginRegistry.primaryProvider();
             for (PluginManifest manifest : pluginManager.enabledProviders()) {
@@ -9273,7 +9602,7 @@ public final class PlayerController {
                 if (generation != pluginLikedGeneration.get()) return;
                 if (error != null) {
                     Logger.warn("plugin {} liked list failed: {}", providerId, safeMessage(error));
-                    pluginLikedBySource.remove(providerId);
+                    // Keep the last confirmed set on transient failures.
                 } else {
                     pluginLikedBySource.put(providerId, new java.util.LinkedHashSet<>(ids));
                 }
@@ -10022,6 +10351,11 @@ public final class PlayerController {
     /** 我的 and the liked hearts keep the other sources' data after one source
      *  signs out; only the leaving source's own slice goes away. */
     private void dropSourceUserData(String providerId) {
+        favoritesGeneration.incrementAndGet();
+        favoritesBySource.remove(providerId);
+        publishUnifiedFavorites();
+        unifiedFavoritesSyncing.set(false);
+        unifiedFavoritesStatus.set("账号已退出，其他平台收藏已保留");
         myPlaylistsBySource.remove(providerId);
         publishMyPlaylists();
         pluginLikedBySource.remove(providerId);

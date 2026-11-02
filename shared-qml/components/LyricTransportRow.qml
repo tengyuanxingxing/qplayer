@@ -9,29 +9,21 @@ import miuix.Core
 Item {
     id: row
     property real gap: 18
-    height: btnSize
-    implicitHeight: 40
-    implicitWidth: 40 * 5 + gap * 4
-
-    readonly property real btnSize: {
-        var half = width / 2
-        var wanted = Math.max(0, gap)
-        if (2.5 * 40 + 2 * wanted <= half) return 40
-        if (2.5 * 40 <= half) return 40
-        return Math.max(1, half / 2.5)
-    }
-    readonly property real fitGap: {
-        var half = width / 2
-        var wanted = Math.max(0, gap)
-        var b = row.btnSize
-        if (2.5 * b + 2 * wanted <= half) return wanted
-        return Math.max(0, (half - 2.5 * b) / 2)
-    }
+    property bool compact: false
+    readonly property real btnSize: Math.max(1, Math.min(compact ? 48 : 56, (width - playSize) / 4))
+    readonly property real playSize: Math.min(compact ? 56 : 72, width * 0.225)
+    height: playSize
+    implicitHeight: compact ? 56 : 72
+    implicitWidth: 300
+    readonly property real fitGap: Math.max(0, (width - playSize - 4 * btnSize) / 4)
 
     IconButton {
         id: pauseBtn
         objectName: "lyricPauseButton"
-        width: row.btnSize; height: row.btnSize
+        width: row.playSize; height: row.playSize
+        iconSize: row.compact ? 32 : 40
+        containerColor: "#F4FFFFFF"
+        contentColor: "#172018"
         anchors.horizontalCenter: parent.horizontalCenter
         anchors.verticalCenter: parent.verticalCenter
         type: "filled"
@@ -45,6 +37,7 @@ Item {
         anchors.right: pauseBtn.left
         anchors.rightMargin: row.fitGap
         anchors.verticalCenter: parent.verticalCenter
+        iconSize: row.compact ? 30 : 38
         type: "standard"; icon: "skip_previous"
         contentColor: "#FFFFFFFF"
         onClicked: player.prev()
@@ -56,12 +49,14 @@ Item {
         anchors.left: pauseBtn.right
         anchors.leftMargin: row.fitGap
         anchors.verticalCenter: parent.verticalCenter
+        iconSize: row.compact ? 30 : 38
         type: "standard"; icon: "skip_next"
         contentColor: "#FFFFFFFF"
         onClicked: player.next()
     }
     IconButton {
         objectName: "lyricPlayModeButton"
+        iconSize: row.compact ? 28 : 32
         width: row.btnSize; height: row.btnSize
         anchors.right: prevBtn.left
         anchors.rightMargin: row.fitGap
@@ -74,6 +69,7 @@ Item {
     }
     IconButton {
         objectName: "lyricLikeButton"
+        iconSize: row.compact ? 28 : 34
         width: row.btnSize; height: row.btnSize
         anchors.left: nextBtn.right
         anchors.leftMargin: row.fitGap

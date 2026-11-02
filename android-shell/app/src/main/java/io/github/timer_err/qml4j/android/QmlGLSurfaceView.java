@@ -92,10 +92,15 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     // scene). lyMoved: it has passed the slop, so it's a scroll, not a tap-to-seek.
     private boolean lyGrab;
     private boolean lyMoved;
+    private long lyTapTime;
+    private boolean lyCanScroll;
+    private boolean lyInfoGesture;
+    private boolean lyInfoCanceled;
+    private boolean lyPortrait;
+    private final dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture pageGesture = new dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture();
     private float lyDownY;
     private long lyDownTimeNanos;
     // Movement (logical px) past which a lyric-body touch is a scroll rather than a tap.
-    private static final float LYRIC_TAP_SLOP = 12f;
     // True while the current touch stream started inside the bottom system-gesture
     // zone (the gesture-navigation handle). Such a stream belongs to the system's
     // home / recents swipe: the system takes it over mid-gesture and the app only
@@ -143,6 +148,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     @Override
     public void onPause() {
+        cancelTouchStream();
         pauseRequested = true;
         liquidGlassTilt.onPause();
         // GLSurfaceView.onPause() waits indefinitely for the render thread. Let
@@ -284,6 +290,23 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         }
     }
 
+    private volatile long touchEpoch;
+    private void cancelTouchStream() {
+        touchEpoch++;
+        activeTouchPointerId = MotionEvent.INVALID_POINTER_ID;
+        systemGestureStream = false;
+        if (disposed) return;
+        queueEvent(() -> {
+            lyGrab = false; lyMoved = false;
+            compositor.lyricRenderer().scrollCancel();
+            if (view != null) view.dispatchPointerCancel();
+        });
+    }
+    @Override public void onWindowFocusChanged(boolean focused) {
+        super.onWindowFocusChanged(focused);
+        if (!focused && compositor != null) cancelTouchStream();
+    }
+
     @Override
     public boolean onTouchEvent(MotionEvent ev) {
         int action = ev.getActionMasked();
@@ -318,10 +341,12 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         }
         // The framework recycles ev on return. One owned copy preserves all
         // coalesced samples and their uptime timestamps until the GL task finishes.
+        final long eventEpoch = touchEpoch;
         final MotionEvent event = MotionEvent.obtain(ev);
         queueEvent(new Runnable() {
             @Override public void run() {
                 try {
+                    if (eventEpoch != touchEpoch || pauseRequested) return;
                     if (view == null) {
                         dispatchTouchEvent(event, pointerIndex, dispatchedAction);
                         return;
@@ -366,12 +391,20 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             // Only host-drawn lyric hit testing requires surface dimensions.
             SkijaGlSurface gl = surface;
             boolean offsetPanelOpen = controller != null
-                    && Boolean.TRUE.equals(controller.lyricOffsetPanelOpen.peek());
+                    && (Boolean.TRUE.equals(controller.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controller.commentsOpen.peek()));
             if (gl != null && !compositor.temperaVisible(controller) && !offsetPanelOpen
-                    && compositor.lyricsScrollable(x, y, gl.width() / uiScale,
-                            gl.height() / uiScale, insetTop())) {
+                    && (compositor.lyricsScrollable(x, y, gl.width() / uiScale,
+                            gl.height() / uiScale, insetTop()) || compositor.playbackSwipeable(x, y,
+                            gl.width() / uiScale, gl.height() / uiScale, insetTop()))) {
                 compositor.lyricRenderer().scrollCancel();
                 lyGrab = true;
+                lyPortrait = gl.width() < gl.height();
+                lyCanScroll = compositor.lyricsScrollable(x, y, gl.width() / uiScale, gl.height() / uiScale, insetTop());
+                lyTapTime = lyCanScroll ? compositor.lyricRenderer().timeAtPoint(x, y) : -1L;
+                lyInfoGesture = controller != null && controller.playbackPage.peek() == 0;
+                lyInfoCanceled = false;
+                if (lyInfoGesture) view.dispatchPointerDown(x, y, eventTimeNanos);
+                pageGesture.begin(x, y);
                 lyDownY = y;
                 lyDownTimeNanos = eventTimeNanos;
                 lyMoved = false;
@@ -391,13 +424,20 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         if (action == MotionEvent.ACTION_MOVE) {
             dispatchTouchMove(x, y, eventTimeNanos);
         } else if (action == MotionEvent.ACTION_UP) {
+            dispatchTouchMove(x, y, eventTimeNanos);
             if (lyGrab) {
                 lyGrab = false;
-                if (lyMoved) {
+                int swipe = pageGesture.finish(x, y);
+                if (lyPortrait && swipe != 0 && controller != null) {
+                    compositor.lyricRenderer().scrollCancel();
+                    controller.swipePlaybackPage(swipe);
+                } else if (lyInfoGesture) {
+                    if (!lyInfoCanceled) view.dispatchPointerUp(x, y, eventTimeNanos);
+                } else if (lyMoved) {
                     compositor.lyricRenderer().scrollUp(eventTimeNanos);
-                } else {
-                    long t = compositor.lyricRenderer().timeAtScreenY(lyDownY);
-                    if (t >= 0L && controller != null) {
+                } else if (lyCanScroll && pageGesture.direction() == 0) {
+                    long t = compositor.lyricRenderer().timeAtPoint(x, y);
+                    if (t == lyTapTime && t >= 0L && controller != null) {
                         compositor.lyricRenderer().cancelUserScrollForSeek();
                         controller.seek(t + LyricConfig.instance.offsetMs.getValue());
                     }
@@ -410,8 +450,16 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     private void dispatchTouchMove(float x, float y, long eventTimeNanos) {
         if (lyGrab) {
+            int direction = pageGesture.move(x, y);
+            if (lyInfoGesture) {
+                if (direction == 2) { if (!lyInfoCanceled) view.dispatchPointerCancel(); lyInfoCanceled = true; }
+                else view.dispatchPointerMove(x, y, eventTimeNanos);
+                return;
+            }
+            if (lyPortrait && direction == 2) return;
+            if (!lyCanScroll) return;
             if (!lyMoved) {
-                if (Math.abs(y - lyDownY) > LYRIC_TAP_SLOP) {
+                if (direction == 1) {
                     lyMoved = true;
                     compositor.lyricRenderer().scrollDown(lyDownY, lyDownTimeNanos);
                     compositor.lyricRenderer().scrollMove(y, eventTimeNanos);

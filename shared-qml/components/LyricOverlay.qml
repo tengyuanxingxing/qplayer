@@ -26,13 +26,16 @@ Item {
     // the host-drawn column move on exactly the same value.
     property real fullWidthK: player.lyricFullWidth
     property bool offsetPanelOpen: false
+    property bool fontPanelOpen: false
+    readonly property int textSize: settings.value("playerTextSize")
+    onFontPanelOpenChanged: player.setLyricOffsetPanelOpen(fontPanelOpen || offsetPanelOpen)
     // Top row inset for the three title buttons. Desktop overrides this to 6
     // (Main.qml hides the custom title bar while the lyric page is open, so the
     // buttons sit flush at the very top of the window); mobile keeps the status
     // bar inset so they clear the system bar.
     property real topPad: settings.topInset + 6
     onOffsetPanelOpenChanged: {
-        player.setLyricOffsetPanelOpen(offsetPanelOpen)
+        player.setLyricOffsetPanelOpen(fontPanelOpen || offsetPanelOpen)
         // Synchronize once on entry. Do not feed every player property change back
         // into Slider.value while its MouseArea is dragging: that re-entrant write
         // interrupts qml4j's active gesture as soon as the thumb moves one step.
@@ -45,11 +48,13 @@ Item {
     // QObject target (a non-QObject target crashes with a ClassCastException at
     // Property.fireListeners on load).
     property bool lyricsOpenMirror: player.lyricsOpen
-    onLyricsOpenMirrorChanged: if (!lyricsOpenMirror) overlay.offsetPanelOpen = false
+    onLyricsOpenMirrorChanged: if (!lyricsOpenMirror) { overlay.offsetPanelOpen = false; overlay.fontPanelOpen = false; player.closeComments() }
 
     function handleBack() {
-        if (!overlay.offsetPanelOpen && offsetPanel.opacity <= 0.01) return false
+        if (player.commentsOpen) { player.closeComments(); return true }
+        if (!overlay.fontPanelOpen && !overlay.offsetPanelOpen && offsetPanel.opacity <= 0.01) return false
         overlay.offsetPanelOpen = false
+        overlay.fontPanelOpen = false
         return true
     }
 
@@ -71,17 +76,20 @@ Item {
     // morph, title/artist stay put. Landscape has its own cover in the left chrome.
     PlaybackCoverImage {
         id: pCover
+        pauseShrinkAspect: 1.0
         animationActive: player.lyricSlide > 0.001 && !overlay.landscape && pCover.visible
         // Big centred art for no-lyric / instrumental tracks. On the lyrics↔cover switch
         // it ZOOMS + FADES (SPlayer's zoom transition) — no big/small morph. Kept
         // rendering while fading out so the zoom-out plays over the appearing lyrics.
-        visible: !overlay.landscape && (overlay.coverOnly || opacity > 0.01)
-        property real coverSize: Math.max(160, Math.min(overlay.width - 96, overlay.height - 360, 420))
+        visible: !overlay.landscape && ((overlay.coverOnly && player.playbackPage !== 0) || opacity > 0.01)
+        property real coverSize: Math.max(96, Math.min(overlay.width - 56, overlay.height - overlay.topPad - 368, 420))
         width: coverSize
         height: coverSize
         anchors.horizontalCenter: parent.horizontalCenter
-        anchors.verticalCenter: parent.verticalCenter
-        radius: Math.min(width, height) * 0.06
+        y: overlay.topPad + 88
+        anchors.horizontalCenterOffset: shown ? 0 : -overlay.width
+        Behavior on anchors.horizontalCenterOffset { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+        radius: Math.min(width, height) * 0.045
         iconSize: 72
         fadeIn: true
         playing: player.playing
@@ -107,7 +115,7 @@ Item {
         source: player.coverPath
         // Zoom + fade in step with the host lyric column's own zoom (SPlayer's whole-
         // content zoom): cover grows in as the lyrics shrink out, and vice versa.
-        property bool shown: overlay.coverOnly && player.lyricSlide > 0.25
+        property bool shown: overlay.coverOnly && player.playbackPage !== 0 && player.lyricSlide > 0.25
         opacity: shown ? 1 : 0
         baseScale: shown ? 1 : 0.95
         Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
@@ -118,8 +126,29 @@ Item {
         // nothing to switch back to, so coverOnly just stays true either way.
         MouseArea {
             anchors.fill: parent
-            onClicked: player.setCoverMode(false)
+            onClicked: {}
         }
+    }
+
+    Row {
+        visible: !overlay.landscape
+        anchors.horizontalCenter: parent.horizontalCenter
+        y: overlay.topPad + 17
+        spacing: 6
+        Rectangle { width: player.playbackPage === 0 ? 14 : 5; height: 5; radius: 3; color: player.playbackPage === 0 ? "#EEFFFFFF" : "#55FFFFFF" }
+        Rectangle { width: player.playbackPage === 1 ? 14 : 5; height: 5; radius: 3; color: player.playbackPage === 1 ? "#EEFFFFFF" : "#55FFFFFF" }
+        Rectangle { width: player.playbackPage === 2 ? 14 : 5; height: 5; radius: 3; color: player.playbackPage === 2 ? "#EEFFFFFF" : "#55FFFFFF" }
+
+    }
+    IconButton {
+        visible: !overlay.landscape && player.playbackPage !== 0
+        anchors.right: parent.right; anchors.rightMargin: 22
+        y: titleText.y - 8
+        width: 56; height: 56; iconSize: 36
+        icon: player.currentLiked ? "favorite" : "favorite_border"
+        contentColor: player.currentLiked ? "#FFFF5277" : "#CCFFFFFF"
+        enabled: player.currentLikeable
+        onClicked: player.toggleLike()
     }
 
     // --- top: dismiss + title + artist ---------------------------------
@@ -156,7 +185,7 @@ Item {
         type: "standard"
         icon: "sync"
         contentColor: "#FFFFFFFF"
-        onClicked: overlay.offsetPanelOpen = !overlay.offsetPanelOpen
+        onClicked: { overlay.fontPanelOpen = false; overlay.offsetPanelOpen = !overlay.offsetPanelOpen }
     }
 
     // Switch to cover view (issue #15: quick lyrics<->cover switching).
@@ -166,15 +195,33 @@ Item {
     IconButton {
         id: coverModeBtn
         objectName: "lyricCoverModeBtn"
-        visible: !overlay.coverOnly
+        visible: true
         anchors.top: parent.top
         anchors.topMargin: overlay.topPad
         anchors.right: offsetBtn.left
         anchors.rightMargin: 6
         type: "standard"
-        icon: "image"
+        icon: overlay.coverOnly ? "lyrics" : "image"
         contentColor: "#FFFFFFFF"
-        onClicked: player.setCoverMode(true)
+        onClicked: player.setCoverMode(player.playbackPage !== 1)
+    }
+
+    IconButton {
+        id: fontSizeBtn
+        objectName: "lyricFontSizeButton"
+        anchors.top: parent.top; anchors.topMargin: overlay.topPad
+        anchors.right: coverModeBtn.left; anchors.rightMargin: 6
+        icon: "text_fields"; contentColor: "#FFFFFFFF"
+        onClicked: { overlay.offsetPanelOpen = false; overlay.fontPanelOpen = !overlay.fontPanelOpen }
+    }
+    PlaybackTextSizePanel {
+        visible: overlay.fontPanelOpen
+        enabled: visible
+        z: 20
+        anchors.top: fontSizeBtn.bottom; anchors.topMargin: 8
+        anchors.right: parent.right; anchors.rightMargin: 16
+        width: Math.min(280, overlay.width - 32)
+        onClosed: overlay.fontPanelOpen = false
     }
 
     // Full-width layout: a way of looking at this page, so it is toggled here
@@ -188,7 +235,7 @@ Item {
                  && settings.has("lyricFullWidth")
         anchors.top: parent.top
         anchors.topMargin: overlay.topPad
-        anchors.right: coverModeBtn.left
+        anchors.right: fontSizeBtn.left
         anchors.rightMargin: 6
         type: "standard"
         // NOT `on`: that is a reserved word in the QML grammar (`Behavior on x`),
@@ -345,21 +392,21 @@ Item {
 
     MarqueeText {
         id: titleText
-        visible: !overlay.landscape
-        anchors.top: backBtn.bottom
-        anchors.topMargin: 2
+        visible: !overlay.landscape && player.playbackPage !== 0 && player.playbackPage !== 0
+        y: overlay.coverOnly ? pCover.y + pCover.height + 32 : overlay.topPad + 54
         anchors.left: parent.left
         anchors.right: parent.right
         anchors.leftMargin: 28
-        anchors.rightMargin: 28
+        anchors.rightMargin: 88
         text: player.title
         textColor: "#FFFFFFFF"
         fontFamily: Theme.typography.titleLarge.family
-        fontSize: 22
+        fontSize: 24 + overlay.textSize * 4
+        fontWeight: Font.DemiBold
     }
     MarqueeText {
         id: artistText
-        visible: !overlay.landscape
+        visible: !overlay.landscape && player.playbackPage !== 0
         anchors.top: titleText.bottom
         anchors.topMargin: 4
         anchors.left: parent.left
@@ -368,7 +415,7 @@ Item {
         anchors.rightMargin: 28
         text: player.artist
         textColor: "#B3FFFFFF"
-        fontSize: 14
+        fontSize: 14 + overlay.textSize * 2
     }
     // Jump to the artist's page. Main.qml's page stack keeps the lyric route
     // underneath and closes its separately-rendered host layer while the artist
@@ -384,69 +431,12 @@ Item {
     }
 
     // --- bottom: transport (portrait) ---------------------------------
-    Item {
-        id: transport
-        visible: !overlay.landscape
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.bottom: parent.bottom
-        anchors.bottomMargin: settings.bottomInset + 12
-        anchors.leftMargin: 28
-        anchors.rightMargin: 28
-        height: 120
-
-        // progress (optional wave) + seek. The wavy phase is an infinite animation gated
-        // on the bar's OWN `visible` (control.visible) — own visibility is not the
-        // ancestor-effective one, so when the lyric page is closed (this whole
-        // overlay invisible) the bar's own visible stayed true and the animation
-        // kept ticking every frame, bumping the change version and defeating the
-        // renderer's idle layout-skip. Tie its visibility to the page being shown.
-        LyricProgress {
-            id: progress
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.top: parent.top
-            anchors.topMargin: 18
-            wavy: settings.value("lyricProgressStyle") === 0
-            visible: player.lyricSlide > 0.001 && !overlay.landscape
-            // While the next track loads, sweep instead of showing a frozen position.
-            indeterminate: player.loading
-            value: player.lyricProgress
-        }
-        MouseArea {
-            anchors.fill: progress
-            anchors.topMargin: -10
-            anchors.bottomMargin: -10
-            onPressed: if (player.durationMs > 0)
-                           player.seek(Math.round(mouseX / width * player.durationMs))
-            onPositionChanged: if (pressed && player.durationMs > 0)
-                                   player.seek(Math.round(Math.max(0, Math.min(width, mouseX)) / width * player.durationMs))
-        }
-        Text {
-            anchors.left: parent.left
-            anchors.top: progress.bottom
-            anchors.topMargin: 6
-            text: overlay.fmt(player.positionMs)
-            color: "#B3FFFFFF"
-            fontSize: 11
-        }
-        Text {
-            anchors.right: parent.right
-            anchors.top: progress.bottom
-            anchors.topMargin: 6
-            text: overlay.fmt(player.durationMs)
-            color: "#B3FFFFFF"
-            fontSize: 11
-        }
-
-        LyricTransportRow {
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 14
-            gap: 18
-        }
+    PlaybackInfoPage {
+        anchors.fill: parent
+        visible: !overlay.landscape && player.playbackPage === 0
+        enabled: visible
     }
+    PortraitPlaybackTransport { visible: !overlay.landscape }
 
     // --- landscape: cover + title + transport on the left -------------
     // The host draws the lyrics in the right half (or, when coverOnly, nothing — and
@@ -705,5 +695,11 @@ Item {
     ToastStack {
         id: lyricSnack
         z: 100
+    }    SongCommentsOverlay {
+        anchors.fill: parent
+        visible: player.commentsOpen
+        enabled: visible
+        z: 100
     }
+
 }

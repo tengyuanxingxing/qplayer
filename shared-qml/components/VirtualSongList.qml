@@ -2,21 +2,10 @@ import QtQuick
 import miuix.Core
 import "."
 
-// Virtualized song list. Only the rows near the viewport are instantiated: the
-// Repeater windows the model to [first, first+window), giving each delegate its
-// GLOBAL index so a row positioned by `y: index*rowH` still lands at its absolute
-// content offset. Scrolling changes contentY (a paint-only translate); only when
-// it crosses a row boundary does `first` change, and because `window` is constant
-// the Repeater slides its existing delegates in place (rewriting each one's index
-// + modelData) rather than rebuilding. So a list of any length — a several-
-// thousand-track local library or playlist — costs ~`window` live delegates, not
-// one SongRow per track (which used to OOM the heap on large libraries).
-//
-// This replaces the earlier "build every row, paint-cull off-screen" approach: that
-// kept the whole list's delegates alive at once, which was smooth to scroll (no
-// per-shift relayout) but did not bound memory. Windowing bounds memory; the
-// per-boundary relayout it reintroduces is absorbed by cachedLayout on the content
-// item (only the ~window moved rows re-measure; the rest of the tree is cached).
+// A bounded ring of reusable rows. A stable slot owns sourceIndex % window,
+// so advancing one row changes only the entering slot's song and cover. All
+// overlapping songs keep their delegates, geometry, image and text caches.
+// contentY remains a paint translation between row boundaries.
 Flickable {
     id: view
     objectName: "virtualSongList"
@@ -319,7 +308,6 @@ Flickable {
             loadMoreRequested()
     }
 
-    onContentYChanged: requestMoreIfNeeded()
     onViewportYChanged: requestMoreIfNeeded()
     onContentHeightChanged: {
         contentY = Math.max(0, Math.min(contentY, Math.max(0, contentHeight - height)))
@@ -343,55 +331,56 @@ Flickable {
         cachedLayout: true
 
         Repeater {
-            model: view.list
-            windowStart: view.first
-            windowCount: view.window
+            model: view.window
             SongRow {
-                // `index` is the GLOBAL row index (the Repeater windows internally).
+                id: pooledRow
+                property int sourceIndex: view.first + ((index - view.first % Math.max(1, view.window) + view.window) % Math.max(1, view.window))
+                property var entry: view.list && sourceIndex < view.count ? view.list[sourceIndex] : null
+                // sourceIndex is global; index is the stable pool slot.
                 objectName: "virtualSongRow"
                 height: view.rowH
                 width: view.width
                 // The gap preview is added here rather than animated on `y` itself:
                 // `y` also jumps when the window recycles this delegate onto another
-                // index, and that jump must stay instant. Dropped the moment the
+                // song, and that jump must stay instant. Dropped the moment the
                 // gesture ends so the settled row does not glide in from the gap.
-                y: view.headerHeight + index * view.rowH
+                y: view.headerHeight + pooledRow.sourceIndex * view.rowH
                    + (view._dragFrom >= 0 ? reorderShift : 0)
-                rowTitle: view.isLocal ? modelData.title : modelData.name
-                rowArtist: modelData.artist
-                rowArtistId: modelData.artistMediaId || modelData.artistId || 0
-                rowArtistIdsCsv: modelData.artistIdsCsv || ""
-                rowArtistNamesCsv: modelData.artistNamesCsv || ""
-                coverThumbPath: modelData.coverThumbPath || ""
+                rowTitle: view.isLocal ? pooledRow.entry.title : pooledRow.entry.name
+                rowArtist: pooledRow.entry.artist + (pooledRow.entry.favoriteSources ? " · " + pooledRow.entry.favoriteSources : "")
+                rowArtistId: pooledRow.entry.artistMediaId || pooledRow.entry.artistId || 0
+                rowArtistIdsCsv: pooledRow.entry.artistIdsCsv || ""
+                rowArtistNamesCsv: pooledRow.entry.artistNamesCsv || ""
+                coverThumbPath: pooledRow.entry.coverThumbPath || ""
                 // Only present on SearchPage.qml's unified list (SearchRow.kindLabel);
                 // every other model shape leaves this "" so no tag renders.
-                tag: modelData.kindLabel || ""
+                tag: pooledRow.entry.kindLabel || ""
                 highlighted: view.isLocal && view.highlightCurrent && (view.highlightByFilePath
-                    ? (player.currentFilePath !== "" && modelData.filePath === player.currentFilePath)
-                    : (player.currentMediaId !== "" && view.rowId(modelData) === player.currentMediaId))
-                offlineReady: view.showOfflineBadge && !!modelData.cachedOffline
+                    ? (player.currentFilePath !== "" && pooledRow.entry.filePath === player.currentFilePath)
+                    : (player.currentMediaId !== "" && view.rowId(pooledRow.entry) === player.currentMediaId))
+                offlineReady: view.showOfflineBadge && !!pooledRow.entry.cachedOffline
                 removable: view.removable && !view.selectMode
-                song: view.songMenu && (!view.menuEligibilityFromModel || !!modelData.menuEnabled)
-                      ? modelData : null
+                song: view.songMenu && (!view.menuEligibilityFromModel || !!pooledRow.entry.menuEnabled)
+                      ? pooledRow.entry : null
                 menuEnabled: view.songMenu && !view.selectMode
-                             && (!view.menuEligibilityFromModel || !!modelData.menuEnabled)
+                             && (!view.menuEligibilityFromModel || !!pooledRow.entry.menuEnabled)
                 inOwnedPlaylist: view.ownedPlaylist
                 inCacheList: view.cacheList
                 selectMode: view.selectMode
                 selected: view.selectMode && view.selectedKey !== ""
                           && (("\n" + view.selectedKey + "\n").indexOf(
-                              "\n" + view.rowId(modelData) + "\n") >= 0)
-                onSelectionToggled: view.toggleSelected(modelData)
-                onActivated: { view.activatedIndex = index; view.activated() }
-                onRemoveRequested: { view.removeIndex = index; view.removeRequested() }
+                              "\n" + view.rowId(pooledRow.entry) + "\n") >= 0)
+                onSelectionToggled: view.toggleSelected(pooledRow.entry)
+                onActivated: { view.activatedIndex = pooledRow.sourceIndex; view.activated() }
+                onRemoveRequested: { view.removeIndex = pooledRow.sourceIndex; view.removeRequested() }
                 reorderable: view.reorderable && !view.selectMode
-                controlsRevealed: view.reorderable ? (view.revealedIndex === index) : true
-                onRevealToggled: view.revealedIndex = (view.revealedIndex === index) ? -1 : index
+                controlsRevealed: view.reorderable ? (view.revealedIndex === pooledRow.sourceIndex) : true
+                onRevealToggled: view.revealedIndex = (view.revealedIndex === pooledRow.sourceIndex) ? -1 : pooledRow.sourceIndex
                 showLikeButton: view.showLikeButton
-                likeable: view.showLikeButton && player.isMediaLikeable(view.rowId(modelData))
+                likeable: view.showLikeButton && player.isMediaLikeable(view.rowId(pooledRow.entry))
                 showDownloadButton: !!player.downloadHelperEnabled && view.songMenu && !view.selectMode
                 onDownloadRequested: {
-                    player.requestDownloadQuality(view.rowId(modelData))
+                    player.requestDownloadQuality(view.rowId(pooledRow.entry))
                     view.downloadClicked()
                 }
                 onMenuDownloadRequested: view.downloadClicked()
@@ -399,41 +388,41 @@ Flickable {
                 // Java method, so without reading a Property here the heart would
                 // never refill after a like (or after the liked list arrives).
                 liked: view.showLikeButton && player.likedRevision >= 0
-                       && player.isMediaLiked(view.rowId(modelData))
+                       && player.isMediaLiked(view.rowId(pooledRow.entry))
                 onLikeToggled: {
-                    player.toggleLikeMedia(view.rowId(modelData))
+                    player.toggleLikeMedia(view.rowId(pooledRow.entry))
                     view.likeClicked()
                 }
                 // The carried row is drawn once, by the floating copy below, so
                 // its slot in the list simply empties out.
-                visible: view._dragFrom !== index
+                visible: view._dragFrom !== pooledRow.sourceIndex
                 // Slide aside to preview the gap. Read straight off the view's
                 // properties (not via a helper function) so the engine records
                 // them all as dependencies of this binding.
                 reorderShift: {
                     if (view._dragFrom < 0 || view._dropIndex < 0) return 0
                     if (view._dragFrom < view._dropIndex) {
-                        return (index > view._dragFrom && index <= view._dropIndex)
+                        return (pooledRow.sourceIndex > view._dragFrom && pooledRow.sourceIndex <= view._dropIndex)
                                ? -view.rowH : 0
                     }
                     if (view._dragFrom > view._dropIndex) {
-                        return (index >= view._dropIndex && index < view._dragFrom)
+                        return (pooledRow.sourceIndex >= view._dropIndex && pooledRow.sourceIndex < view._dragFrom)
                                ? view.rowH : 0
                     }
                     return 0
                 }
                 onReorderPressed: {
-                    view._dragFrom = index
-                    view._dragIdentity = view.rowId(modelData)
-                    view._dropIndex = index
+                    view._dragFrom = pooledRow.sourceIndex
+                    view._dragIdentity = view.rowId(pooledRow.entry)
+                    view._dropIndex = pooledRow.sourceIndex
                     view._dragGrabOffset = reorderGrabOffset
-                    view._dragFloatY = view.headerHeight + index * view.rowH
+                    view._dragFloatY = view.headerHeight + pooledRow.sourceIndex * view.rowH
                     view._dragViewportY = reorderContentY - view.viewportY
                     view._dragLastActivityMs = Date.now()
                 }
                 onReorderDragged: {
                     // A press always precedes this, but a delegate recycled onto
-                    // another index mid-gesture must not re-seat the drag.
+                    // another song mid-gesture must not re-seat the drag.
                     if (view._dragFrom < 0) return
                     view._dragLastActivityMs = Date.now()
                     view._dragViewportY = reorderContentY - view.viewportY

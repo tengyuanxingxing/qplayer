@@ -1,0 +1,78 @@
+{
+  "schemaVersion": 1,
+  "id": "qq",
+  "name": "QQ音乐（评论与歌手扩展）",
+  "version": "0.7.3.2",
+  "apiVersion": "1.0",
+  "minHostVersion": "1.9.10-custom",
+  "entry": "src/main.js",
+  "publisher": "Local Custom Build",
+  "capabilities": [
+    "searchSongs",
+    "songDetails",
+    "playlistDetails",
+    "artistDetails",
+    "albumDetails",
+    "home",
+    "userPlaylists",
+    "resolveStream",
+    "lyrics",
+    "account",
+    "like",
+    "playlistMutation",
+    "playlistReorder",
+    "playlistCover",
+    "login",
+    "comments",
+    "searchArtists"
+  ],
+  "permissions": [
+    "network",
+    "clearTextNetwork",
+    "credentials",
+    "webAuth",
+    "notifications",
+    "customUi"
+  ],
+  "networkDomains": [
+    "y.qq.com",
+    "c.y.qq.com",
+    "u.y.qq.com",
+    "i.y.qq.com",
+    "qpic.y.qq.com",
+    "music-file.y.qq.com",
+    "ws.stream.qqmusic.qq.com",
+    "s.plcloud.music.qq.com",
+    "y.gtimg.cn",
+    "*.gtimg.cn",
+    "ssl.ptlogin2.qq.com",
+    "ssl.ptlogin2.graph.qq.com",
+    "graph.qq.com",
+    "thirdqq.qlogo.cn",
+    "*.qlogo.cn",
+    "music-api.gdstudio.xyz",
+    "search.kuwo.cn",
+    "mobi.kuwo.cn",
+    "bd-api.kuwo.cn",
+    "bd-er.kuwo.cn",
+    "*.bd-er.kuwo.cn",
+    "*.kuwo.cn",
+    "*.joox.com",
+    "*.tencentmusic.com",
+    "music.126.net",
+    "*.music.126.net",
+    "c6.y.qq.com"
+  ],
+  "networkMethods": [
+    "GET",
+    "POST"
+  ],
+  "ui": [
+    {
+      "id": "unblock",
+      "placement": "settings",
+      "label": "音源解锁",
+      "icon": "lock_open"
+    }
+  ]
+}

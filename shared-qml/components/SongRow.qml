@@ -16,6 +16,7 @@ Rectangle {
 
     property string rowTitle: ""
     property string rowArtist: ""
+    property bool darkSurface: false
     // Id of rowArtist's (first-listed) artist -- 0 for local tracks / unknown,
     // which disables the artist-name tap target below.
     property var rowArtistId: 0
@@ -278,7 +279,7 @@ Rectangle {
         width: Math.max(0, row.width - x - row._rightReserve)
         text: row.rowTitle
         elide: Text.ElideRight
-        color: row.highlighted ? Theme.color.primary : Theme.color.onSurfaceColor
+        color: row.darkSurface ? "#F1F5FB" : (row.highlighted ? Theme.color.primary : Theme.color.onSurfaceColor)
         fontSize: 16
     }
 
@@ -290,7 +291,7 @@ Rectangle {
         width: titleText.width
         text: row.rowArtist
         elide: Text.ElideRight
-        color: ((row.rowArtistIdsCsv !== "" || row.rowArtistId !== 0)
+        color: row.darkSurface ? "#AEC1D1" : ((row.rowArtistIdsCsv !== "" || row.rowArtistId !== 0)
                 && artistArea.containsMouse)
                ? Theme.color.primary : Theme.color.onSurfaceVariantColor
         fontSize: 13
@@ -358,6 +359,7 @@ Rectangle {
         rippleColor: Theme.color.onSurfaceColor
         longPressEnabled: row.reorderable || (row.menuEnabled && row.song !== null)
         onClicked: {
+            if (!ripple.tapAllowed) return
             if (row._menuArmed) { row._menuArmed = false; return }
             if (row.selectMode) row.selectionToggled()
             else row.activated()

@@ -28,7 +28,6 @@ import java.util.Locale;
  */
 final class InputBridge {
 
-    private static final float LYRIC_TAP_SLOP = 12f;
     private static final long FULLSCREEN_EXIT_HOLD_NANOS = 1_200_000_000L;
 
     private final DesktopWindow win;
@@ -71,6 +70,12 @@ final class InputBridge {
     // Lyric-body gesture state (render-thread only).
     private boolean lyGrab;
     private boolean lyMoved;
+    private long lyTapTime;
+    private boolean lyCanScroll;
+    private boolean lyInfoGesture;
+    private boolean lyInfoCanceled;
+    private boolean lyPortrait;
+    private final dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture pageGesture = new dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture();
     private float lyDownY;
     private long lyDownTimeNanos;
 
@@ -316,7 +321,7 @@ final class InputBridge {
         LyricCompositor c = win.compositor();
         PlayerController controllerForGesture = win.controller();
         boolean offsetPanelOpen = controllerForGesture != null
-                && Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek());
+                && (Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.commentsOpen.peek()));
         float topInset = win.settings() != null ? win.settings().topInset() : 0f;
         float uiScale = win.uiScale();
         float surfaceWLogical = win.framebufferSize()[0] / uiScale;
@@ -403,14 +408,21 @@ final class InputBridge {
         LyricCompositor c = win.compositor();
         PlayerController controllerForGesture = win.controller();
         boolean offsetPanelOpen = controllerForGesture != null
-                && Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek());
+                && (Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.commentsOpen.peek()));
         // The lyric body (between the QML title and transport bands) is host-drawn
         // with no QML controls under it: a drag scrolls, a tap seeks. Wait for slop
         // before engaging the scroll so a tap stays a tap. Suppressed while the
         // offset-adjust panel (real QML) is open over that same region.
-        if (!win.temperaPageVisible() && !offsetPanelOpen && c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset)) {
+        if (!win.temperaPageVisible() && !offsetPanelOpen && (c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset) || c.playbackSwipeable(lx, ly, surfaceWLogical, surfaceHLogical, topInset))) {
             c.lyricRenderer().scrollCancel();
             lyGrab = true;
+            lyPortrait = surfaceWLogical < surfaceHLogical;
+            lyCanScroll = c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset);
+            lyTapTime = lyCanScroll ? c.lyricRenderer().timeAtPoint(lx, ly) : -1L;
+            lyInfoGesture = controllerForGesture != null && controllerForGesture.playbackPage.peek() == 0;
+            lyInfoCanceled = false;
+            if (lyInfoGesture) v.dispatchPointerDown(lx, ly, eventTimeNanos);
+            pageGesture.begin(lx, ly);
             lyDownY = ly;
             lyDownTimeNanos = eventTimeNanos;
             lyMoved = false;
@@ -425,8 +437,16 @@ final class InputBridge {
         float lx = x / scale, ly = y / scale;
         if (lyGrab) {
             LyricCompositor c = win.compositor();
+            int direction = pageGesture.move(lx, ly);
+            if (lyInfoGesture) {
+                if (direction == 2) { if (!lyInfoCanceled) win.view().dispatchPointerCancel(); lyInfoCanceled = true; }
+                else win.view().dispatchPointerMove(lx, ly, eventTimeNanos);
+                return;
+            }
+            if (lyPortrait && direction == 2) return;
+            if (!lyCanScroll) return;
             if (!lyMoved) {
-                if (Math.abs(ly - lyDownY) > LYRIC_TAP_SLOP) {
+                if (direction == 1) {
                     lyMoved = true;
                     c.lyricRenderer().scrollDown(lyDownY, lyDownTimeNanos);
                     c.lyricRenderer().scrollMove(ly, eventTimeNanos);
@@ -446,14 +466,21 @@ final class InputBridge {
         float scale = pointerScale();
         float lx = x / scale, ly = y / scale;
         if (lyGrab) {
+            onMove(x, y, eventTimeNanos);
             lyGrab = false;
             LyricCompositor c = win.compositor();
             PlayerController controller = win.controller();
-            if (lyMoved) {
+            int swipe = pageGesture.finish(lx, ly);
+            if (lyPortrait && swipe != 0 && controller != null) {
+                c.lyricRenderer().scrollCancel();
+                controller.swipePlaybackPage(swipe);
+            } else if (lyInfoGesture) {
+                if (!lyInfoCanceled) win.view().dispatchPointerUp(lx, ly, eventTimeNanos);
+            } else if (lyMoved) {
                 c.lyricRenderer().scrollUp(eventTimeNanos);
-            } else {
-                long t = c.lyricRenderer().timeAtScreenY(lyDownY);
-                if (t >= 0L && controller != null) {
+            } else if (lyCanScroll && pageGesture.direction() == 0) {
+                long t = c.lyricRenderer().timeAtPoint(lx, ly);
+                if (t == lyTapTime && t >= 0L && controller != null) {
                     // A pending eased wheel tail would otherwise call scrollByWheel()
                     // next frame and re-enter manual-scroll mode after this seek.
                     clearWheelTail();

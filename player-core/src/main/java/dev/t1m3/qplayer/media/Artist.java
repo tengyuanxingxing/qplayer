@@ -13,6 +13,8 @@ public final class Artist {
     public String description = "";
     public int albumCount;
     public int songCount;
+    public String nextSongCursor = "";
+    public String nextAlbumCursor = "";
     public List<Song> songs = new ArrayList<>();
     public List<Album> albums = new ArrayList<>();
 }

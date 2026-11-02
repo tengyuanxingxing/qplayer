@@ -13,6 +13,8 @@ MouseArea {
     property alias clipBottomRightRadius: stateLayer.bottomRightRadius
     property bool longPressEnabled: false
     property int longPressMs: 480
+    property bool tapAllowed: false
+    property real pressedAt: 0
     property real pressX: 0
     property real pressY: 0
     signal longPressed()
@@ -41,9 +43,11 @@ MouseArea {
         id: holdTimer
         interval: indicationRoot.longPressMs
         repeat: false
-        onTriggered: indicationRoot.longPressed()
+        onTriggered: { indicationRoot.tapAllowed = false; indicationRoot.longPressed() }
     }
     onPressed: (mouse) => {
+        indicationRoot.tapAllowed = true
+        indicationRoot.pressedAt = Date.now()
         indicationRoot.pressX = mouse.x
         indicationRoot.pressY = mouse.y
         if (indicationRoot.longPressEnabled && mouse.button === Qt.RightButton) {
@@ -53,13 +57,16 @@ MouseArea {
         }
     }
     onPositionChanged: (mouse) => {
+        var moveX = mouse.x - indicationRoot.pressX
+        var moveY = mouse.y - indicationRoot.pressY
+        if (moveX * moveX + moveY * moveY > 64) indicationRoot.tapAllowed = false
         if (holdTimer.running) {
             var dx = mouse.x - indicationRoot.pressX
             var dy = mouse.y - indicationRoot.pressY
             if (dx * dx + dy * dy > 100) holdTimer.stop()
         }
     }
-    onReleased: holdTimer.stop()
-    onCanceled: holdTimer.stop()
+    onReleased: { holdTimer.stop(); indicationRoot.tapAllowed = indicationRoot.tapAllowed && Date.now() - indicationRoot.pressedAt < 400 }
+    onCanceled: { holdTimer.stop(); indicationRoot.tapAllowed = false }
     onEnabledChanged: if (!enabled) holdTimer.stop()
 }

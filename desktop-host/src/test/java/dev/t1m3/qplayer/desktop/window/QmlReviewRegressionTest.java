@@ -54,14 +54,15 @@ public class QmlReviewRegressionTest {
     }
 
     @Test
-    public void optionalLocalTabPreservesCurrentAndPendingLibraryIdentity() throws Exception {
+    public void legacyLocalTabPreferenceCannotChangeTheTwoDestinationShell() throws Exception {
         try (Scene scene = new Scene(temporary.newFolder().toPath())) {
             scene.settings.setValue("pageTransitionPreset", 4);
             scene.settings.setValue("showLocalTab", true);
             scene.loadMain();
             scene.set("testAction", 1);
             scene.frames(4);
-            assertEquals(3, scene.number("page"));
+            assertEquals(2, scene.number("page"));
+            assertEquals(-1, scene.number("localPageIndex"));
             scene.set("testAction", 2); // keep the settings route open during reindexing
             scene.settings.setValue("showLocalTab", false);
             scene.frames(4);
@@ -70,20 +71,22 @@ public class QmlReviewRegressionTest {
             assertEquals(Boolean.TRUE, scene.value("libraryLoaded"));
             scene.settings.setValue("showLocalTab", true);
             scene.frames(4);
-            assertEquals(3, scene.number("page"));
-            assertEquals(3, scene.number("nextPage"));
+            assertEquals(2, scene.number("page"));
+            assertEquals(2, scene.number("nextPage"));
             scene.set("testAction", 3);
             scene.frames(4);
-            assertEquals(3, scene.number("page"));
+            assertEquals(2, scene.number("page"));
         }
     }
 
     @Test
-    public void pendingLibraryDestinationReindexesBeforeAnimationSwap() throws Exception {
+    public void pendingLibraryDestinationKeepsItsIdentityAcrossLegacyPreferenceChanges() throws Exception {
         try (Scene scene = new Scene(temporary.newFolder().toPath())) {
             scene.settings.setValue("pageTransitionPreset", 1);
             scene.settings.setValue("showLocalTab", true);
             scene.loadMain();
+            scene.set("testAction", 8);
+            scene.frames(80);
             scene.set("testAction", 1);
             assertEquals(0, scene.number("page"));
             scene.settings.setValue("showLocalTab", false);
@@ -521,6 +524,7 @@ public class QmlReviewRegressionTest {
                         if (testAction === 2) app.replacePage("settings", 0)
                         if (testAction === 3) app.goHome()
                         if (testAction === 4) app.switchTo(1)
+                        if (testAction === 8) app.switchTo(0)
                         if (testAction === 5 || testAction === 6) app.handleBack()
                         if (testAction === 7) {
                             player.lyricsOpen = true

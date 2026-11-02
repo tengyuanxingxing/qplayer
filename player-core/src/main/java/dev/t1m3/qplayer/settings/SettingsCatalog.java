@@ -207,10 +207,6 @@ public final class SettingsCatalog {
                 .group("window")
                 .build());
         // ---- 页面 -----------------------------------------------------------
-        out.add(SettingSpec.toggle("showLocalTab", PAGES, "settings.showLocalTab.title", true)
-                .desc("settings.showLocalTab.desc")
-                .group("home")
-                .build());
         out.add(SettingSpec.toggle(HOME_DAILY_FIRST_KEY, PAGES,
                         "settings.homeDailyFirst.title", false)
                 .desc("settings.homeDailyFirst.desc")
@@ -290,18 +286,16 @@ public final class SettingsCatalog {
                 .unit("%").dots()
                 .group("background")
                 .build());
-        out.add(SettingSpec.slider("lyricFontSize", LYRIC, "settings.lyricFontSize.title",
-                        28, 14, 40, 1)
-                .unit(" px").dots()
-                .group("lyricText")
-                .build());
+        out.add(SettingSpec.segmented("playerTextSize", LYRIC, "settings.playerTextSize.title", 1,
+                        "settings.playerTextSize.small", "settings.playerTextSize.medium", "settings.playerTextSize.large")
+                .group("lyricText").build());
         out.add(SettingSpec.segmented("lyricFontWeight", LYRIC, "settings.lyricFontWeight.title", 2,
                         "settings.lyricFontWeight.thin", "settings.lyricFontWeight.light",
                         "settings.lyricFontWeight.regular", "settings.lyricFontWeight.medium")
                 .group("lyricText")
                 .build());
         out.add(SettingSpec.slider("lyricLineSpacing", LYRIC, "settings.lyricLineSpacing.title",
-                        200, 100, 250, 5)
+                        250, 100, 250, 5)
                 .scale(100).unit("×").dots()
                 .group("lyricText")
                 .build());

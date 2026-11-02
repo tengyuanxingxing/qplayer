@@ -50,6 +50,7 @@ Item {
         } else {
             player.search(text)
             player.searchLocal(text)
+            player.searchArtistSuggestions(text)
         }
     }
 
@@ -486,6 +487,13 @@ Item {
             // available even though all three sources share one visual list.
             VirtualSongList {
                 id: unifiedResults
+                headerHeight: player.suggestedArtists.length > 0 ? 100 : 0
+                header: Component {
+                    SearchArtistSuggestion {
+                        width: unifiedResults.width; height: 100
+                        onShowArtists: { player.setSearchMode("artist"); page.runSearchNow() }
+                    }
+                }
                 anchors.fill: parent
                 bottomContentInset: page.bottomContentInset
                 visible: player.searchMode === "song"
@@ -579,7 +587,7 @@ Item {
                             x: page.gridPad + (index % page.gridCols) * (page.cardTile + page.gridGap)
                             y: page.gridGap + Math.floor(index / page.gridCols) * (page.cardH + page.gridGap)
                             name: modelData.name
-                            count: modelData.musicSize
+                            count: modelData.songCount || modelData.musicSize || 0
                             coverUrl: modelData.coverUrl
                             coverThumbPath: modelData.coverThumbPath || ""
                             onClicked: player.openMediaArtist("" + modelData.id)

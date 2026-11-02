@@ -382,7 +382,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     @Override public boolean temperaWholeLine() { return bool("temperaWholeLine"); }
     @Override public int temperaGlyphSettleStretch() { return intOf("temperaGlyphSettleStretch"); }
     @Override public boolean temperaImages() { return bool("temperaImages"); }
-    @Override public int lyricFontSize() { return intOf("lyricFontSize"); }
+    @Override public int lyricFontSize() { return 16 + 4 * Math.max(0, Math.min(2, intOf("playerTextSize"))); }
     @Override public boolean lyricFullWidth() { return bool("lyricFullWidth"); }
     @Override public boolean lyricLayoutCloud() {
         return intOf(SettingsCatalog.LAYOUT_STYLE_KEY) == SettingsCatalog.LAYOUT_STYLE_CLOUD;
@@ -525,7 +525,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
     private void apply(SettingSpec spec, Object v) {
         if (SettingsCatalog.LANGUAGE_KEY.equals(spec.key)) {
             applyLanguage();
-        } else if (spec.key.startsWith("lyric") && !SettingsCatalog.BG_MODE_KEY.equals(spec.key)) {
+        } else if ((spec.key.startsWith("lyric") && !SettingsCatalog.BG_MODE_KEY.equals(spec.key)) || "playerTextSize".equals(spec.key)) {
             applyLyricConfig();
         } else if ("darkMode".equals(spec.key)) {
             recomputeDark();
@@ -570,7 +570,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
 
     private void applyLyricConfig() {
         LyricConfig c = LyricConfig.instance;
-        c.lyricFontSize.setValue(intOf("lyricFontSize"));
+        c.lyricFontSize.setValue(lyricFontSize());
         int w = Math.max(0, Math.min(3, intOf("lyricFontWeight")));
         c.fontWeight.setValue(LyricConfig.FontWeight.values()[w]);
         c.lineSpacing.setValue(intOf("lyricLineSpacing") / 100f);

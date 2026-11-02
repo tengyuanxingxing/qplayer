@@ -38,3 +38,6 @@ desktop-host/src/main/java/dev/t1m3/qplayer/desktop/tools/
 # test JVM occasionally dies and drops these in the repo root.
 hs_err_pid*.log
 replay_pid*.log
+
+# Local delivery artifacts
+/deliverables/

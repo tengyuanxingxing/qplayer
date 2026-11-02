@@ -14,8 +14,8 @@ Rectangle {
     id: app
     color: Theme.color.surface
 
-    property int page: 0
-    property int nextPage: 0
+    property int page: 2
+    property int nextPage: 2
     property bool loginOpen: false
     property bool showLog: false
     property bool volumeOpen: false
@@ -58,7 +58,7 @@ Rectangle {
     // Build only the initial home page on startup. Once visited, a page remains
     // loaded so navigation state and close animations are preserved.
     property bool searchLoaded: false
-    property bool libraryLoaded: false
+    property bool libraryLoaded: true
     property bool localLoaded: false
     property bool detailLoaded: false
     property bool localPlaylistLoaded: false
@@ -129,44 +129,10 @@ Rectangle {
         else if (!lyricsOpenWatch && app.topPageType() === "lyrics")
             app.popPage()
     }
-    // Derived from navItems below rather than listed separately, so the title
-    // bar can never drift out of sync with whatever order the nav actually has.
-    property var titles: {
-        var out = []
-        for (var i = 0; i < navItems.length; i++) out.push(navItems[i].text)
-        return out
-    }
-    property bool showLocalTab: settings.value("showLocalTab")
-    // 本地 (device files) sits right after 搜索 when shown; 我的 (library) is
-    // bumped to the last slot to make room, otherwise it keeps its own slot.
-    // Every other page-index check in this file goes through these two instead
-    // of a literal 2/3, so the two pages' positions can be swapped in one place.
-    readonly property int libraryPageIndex: showLocalTab ? 3 : 2
-    readonly property int localPageIndex: showLocalTab ? 2 : -1
-    // Keep stable identities across the optional tab's insertion/removal. Read
-    // the old layout explicitly: derived index bindings have not flushed here.
-    property bool localTabLayout: false
-    function rootIdentity(index, localTab) {
-        if (index === 0) return "home"
-        if (index === 1) return "search"
-        if (localTab && index === 2) return "local"
-        return "library"
-    }
-    function rootIndex(identity, localTab) {
-        if (identity === "search") return 1
-        if (identity === "library") return localTab ? 3 : 2
-        if (identity === "local" && localTab) return 2
-        return 0
-    }
-    onShowLocalTabChanged: {
-        var current = app.rootIdentity(app.page, app.localTabLayout)
-        var pending = app.rootIdentity(app.nextPage, app.localTabLayout)
-        app.localTabLayout = app.showLocalTab
-        app.page = app.rootIndex(current, app.showLocalTab)
-        app.nextPage = app.rootIndex(pending, app.showLocalTab)
-        if (current === "library" || pending === "library") app.libraryLoaded = true
-        if (app.showLocalTab && (current === "local" || pending === "local")) app.localLoaded = true
-    }
+    // Search is reached from Home; the navigation destinations are Home and My.
+    property var titles: ["首页", i18n.t("nav.search"), i18n.t("nav.library")]
+    readonly property int libraryPageIndex: 2
+    readonly property int localPageIndex: -1
 
     // Responsive breakpoints: compact < 600, medium 600–839, expanded ≥ 840.
     // The wide layout (a NavigationRail on the left instead of the bottom bar) is
@@ -185,23 +151,16 @@ Rectangle {
     // load, not continuously re-fetched on every resize.
     onWideChanged: player.setWideLayout(wide)
     Component.onCompleted: {
-        app.localTabLayout = app.showLocalTab
+        player.loadMyPlaylists()
         player.setWideLayout(wide)
     }
 
     // Shared nav model for both the bottom bar and the rail.
-    property var navItems: showLocalTab
-        ? [
-            { icon: "recommend",     text: i18n.t("nav.home") },
-            { icon: "search",        text: i18n.t("nav.search") },
-            { icon: "folder",        text: i18n.t("nav.local") },
-            { icon: "library_music", text: i18n.t("nav.library") }
-          ]
-        : [
-            { icon: "recommend",     text: i18n.t("nav.home") },
-            { icon: "search",        text: i18n.t("nav.search") },
-            { icon: "library_music", text: i18n.t("nav.library") }
-          ]
+    property var navItems: [
+        { icon: "home", text: "首页" },
+        { icon: "person", text: i18n.t("nav.library") }
+    ]
+    function navigateBottom(index) { app.switchTo(index === 1 ? 2 : 0) }
 
     // Rebuild the debug log string only while it's actually shown (its set() forces a
     // full relayout, which periodically stuttered the scene when always rebuilt).
@@ -456,7 +415,7 @@ Rectangle {
     // route-backed pages. Keeping only one page painted avoids two expensive QML
     // trees being laid out during the transition.
     function switchTo(idx) {
-        if (idx < 0 || idx >= app.navItems.length) return
+        if (idx < 0 || idx > 2) return
         var returningFromRoute = app.navigationStack.length > 0
         app.clearPages()
         if (idx === app.page) {
@@ -642,6 +601,7 @@ Rectangle {
                     anchors.fill: parent
                     bottomContentInset: app.bottomContentInset
                     visible: app.page === 0
+                    onOpenSearch: app.switchTo(1)
                     onOpenPlaylist: {
                         player.openMediaPlaylist("" + home.pendingPlaylist.id)
                         app.replacePage("detail", home.pendingPlaylist.id)
@@ -874,9 +834,9 @@ Rectangle {
         liquidGlass: app.floatingBottomChrome
         height: app.wide ? settings.bottomInset : bottomNav.barHeight
         bottomInset: settings.bottomInset
-        currentIndex: app.page
+        currentIndex: app.page === 2 ? 1 : 0
         items: app.navItems
-        onNavigate: app.switchTo(bottomNav.pendingIndex)
+        onNavigate: app.navigateBottom(bottomNav.pendingIndex)
     }
 
     // Lyric page chrome (title / wavy progress / transport), over the host-drawn

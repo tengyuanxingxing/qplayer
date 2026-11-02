@@ -5,6 +5,7 @@ Item {
 
     property string icon: ""
     property string type: "standard"
+    property real iconSize: 24
     property bool enabled: true
     // IconButtonDefaults.CornerRadius is 40dp, clamped to a circle at the 40dp
     // default size.
@@ -61,8 +62,8 @@ Item {
         Icon {
             anchors.centerIn: parent
             name: control.icon
-            width: 24
-            height: 24
+            width: control.iconSize
+            height: control.iconSize
             color: contentColor
         }
     }

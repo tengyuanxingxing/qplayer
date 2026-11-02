@@ -15,6 +15,7 @@ public final class Album {
     public String artistMediaId = "";
     public long publishTimeMs;
     public String description = "";
+    public String releaseType = "";
     public int trackCount;
     public List<Song> songs = new ArrayList<>();
 }

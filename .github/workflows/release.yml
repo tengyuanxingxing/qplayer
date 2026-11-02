@@ -58,8 +58,13 @@ permissions:
   contents: write
 
 jobs:
+  # Custom test releases attach the locally verified APK so updates retain the
+  # same application ID and signing certificate. Do not replace that APK with
+  # the upstream release variant (or an unsigned build without signing secrets).
   android:
-    if: github.event_name != 'workflow_dispatch' || !inputs.desktop_only
+    if: >-
+      !contains(github.event.release.tag_name || inputs.release_tag || github.ref_name, '-custom')
+      && (github.event_name != 'workflow_dispatch' || !inputs.desktop_only)
     runs-on: ubuntu-latest
     env:
       QPLAYER_STORE_PASSWORD: ${{ secrets.QPLAYER_STORE_PASSWORD }}
@@ -124,7 +129,9 @@ jobs:
           path: out/*
 
   desktop:
-    if: github.event_name != 'workflow_dispatch' || !inputs.android_only
+    if: >-
+      !contains(github.event.release.tag_name || inputs.release_tag || github.ref_name, '-custom')
+      && (github.event_name != 'workflow_dispatch' || !inputs.android_only)
     strategy:
       fail-fast: false
       matrix:
@@ -276,6 +283,7 @@ jobs:
     # only when given a release_tag; an android_only run then ships just the APK.
     if: >-
       !cancelled()
+      && !contains(github.event.release.tag_name || inputs.release_tag || github.ref_name, '-custom')
       && needs.android.result == 'success'
       && (needs.desktop.result == 'success'
           || (github.event_name == 'workflow_dispatch' && inputs.android_only))

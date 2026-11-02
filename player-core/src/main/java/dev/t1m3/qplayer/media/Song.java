@@ -21,6 +21,11 @@ public final class Song {
     public String artistIdsCsv = "";
     public String artistNamesCsv = "";
     public String isrc = "";
+    public long publishTimeMs;
+    public String credits = "";
+    public String genre = "";
+    /** Host-only label on the unified favorites projection; IDs still address their own provider. */
+    public String favoriteSources = "";
     public boolean playable = true;
     public boolean trial;
     public boolean restricted;

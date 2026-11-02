@@ -165,6 +165,10 @@ public class ResponsiveNavigationTest {
                 }
                 queue.flush();
 
+                Property<?> initialPage = (Property<?>) view.root().getClass().getField("page").get(view.root());
+                assertEquals("Launch into My library", 2, ((Number) initialPage.peek()).intValue());
+                assertEquals("Only Home and My destinations", null, view.findByObjectName(
+                        width > 600 ? "miuixRailItem2" : "miuixNavigationItem2"));
                 Item target = view.findByObjectName(targetName);
                 assertNotNull(targetName, target);
                 assertTrue("Navigation target must retain a hit-testable width",
@@ -174,8 +178,11 @@ public class ResponsiveNavigationTest {
 
                 Property<?> nextPage = (Property<?>) view.root().getClass()
                         .getField("nextPage").get(view.root());
-                assertEquals("Search tab must receive the pointer click at width " + width,
-                        1, ((Number) nextPage.peek()).intValue());
+                assertEquals("My tab must receive the pointer click at width " + width,
+                        2, ((Number) nextPage.peek()).intValue());
+                click(view, view.findByObjectName(width > 600 ? "miuixRailItem0" : "miuixNavigationItem0"));
+                queue.flush();
+                assertEquals("Home remains reachable", 0, ((Number) nextPage.peek()).intValue());
             } finally {
                 queue.uninstall();
             }

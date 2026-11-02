@@ -78,6 +78,45 @@ Item {
             }
         }
 
+        Rectangle {
+            Layout.fillWidth: true
+            Layout.leftMargin: 16
+            Layout.rightMargin: 16
+            Layout.bottomMargin: 12
+            Layout.preferredHeight: page.showLocal ? 0 : 84
+            visible: !page.showLocal
+            radius: 22
+            color: Theme.color.surfaceContainerHigh
+            Icon {
+                x: 18; anchors.verticalCenter: parent.verticalCenter
+                width: 36; height: 36; name: "favorite"; color: "#FF5277"
+            }
+            Text {
+                x: 68; y: 15; text: "我喜欢 · 全部平台"
+                font.pixelSize: 19; font.weight: Font.DemiBold
+                color: Theme.color.onSurfaceColor
+            }
+            Text {
+                x: 68; y: 45; width: parent.width - 130
+                text: player.unifiedFavoritesSyncing ? "正在同步各平台收藏…" : player.unifiedFavoritesCount + " 首 · QQ音乐 / 网易云等已登录音源"
+                font.pixelSize: 12; elide: Text.ElideRight
+                color: Theme.color.onSurfaceVariantSummary
+            }
+            MouseArea {
+                anchors.fill: parent
+                onClicked: {
+                    page.pendingPlaylist = { id: "qplayer:playlist:unified-favorites" }
+                    page.openPlaylist()
+                }
+            }
+            IconButton {
+                anchors.right: parent.right; anchors.rightMargin: 10
+                anchors.verticalCenter: parent.verticalCenter
+                icon: "sync"; enabled: !player.unifiedFavoritesSyncing
+                onClicked: player.refreshUnifiedFavorites()
+            }
+        }
+
         Item {
             id: contentArea
             Layout.fillWidth: true

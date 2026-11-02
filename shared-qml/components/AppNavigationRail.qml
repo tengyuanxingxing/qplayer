@@ -74,10 +74,10 @@ Item {
         selectOnClick: false
         showToggle: false
         expandedWidth: 216
-        currentIndex: rail.pageManager.page
+        currentIndex: rail.pageManager.page === 2 ? 1 : 0
         model: rail.pageManager.navItems
         sectionLabel: i18n.t("nav.section")
-        onItemClicked: (index, itemData) => rail.pageManager.switchTo(index)
+        onItemClicked: (index, itemData) => rail.pageManager.navigateBottom(index)
     }
     Item {
         id: railActions

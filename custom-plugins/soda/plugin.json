@@ -1,0 +1,60 @@
+{
+  "schemaVersion": 1,
+  "id": "soda",
+  "name": "汽水音乐（登录修复）",
+  "version": "0.1.1",
+  "apiVersion": "1.0",
+  "minHostVersion": "1.9.10-custom",
+  "entry": "src/main.js",
+  "publisher": "Local Custom Build",
+  "capabilities": [
+    "searchSongs",
+    "searchAlbums",
+    "songDetails",
+    "playlistDetails",
+    "albumDetails",
+    "artistDetails",
+    "home",
+    "userPlaylists",
+    "resolveStream",
+    "lyrics",
+    "account",
+    "login"
+  ],
+  "permissions": [
+    "network",
+    "credentials"
+  ],
+  "networkDomains": [
+    "api.qishui.com",
+    "www.qishui.com",
+    "bff-pc.qishui.com",
+    "qishui.douyin.com",
+    "beta-luna.douyin.com",
+    "p3-luna.douyinpic.com",
+    "*.qishui.com",
+    "*.douyin.com",
+    "*.douyinpic.com",
+    "*.bytecdn.cn",
+    "*.volccdn.com",
+    "*.bytedance.com",
+    "*.ibytedtos.com",
+    "*.snssdk.com",
+    "*.byteimg.com",
+    "*.toutiao.com",
+    "*.douyinvod.com",
+    "*.volcvod.com",
+    "*.bytevod.com",
+    "*.volces.com",
+    "*.byted-static.com",
+    "*.pstatp.com",
+    "*.ixigua.com",
+    "*.amemv.com",
+    "*.toutiaovod.com"
+  ],
+  "networkMethods": [
+    "GET",
+    "POST"
+  ],
+  "ui": []
+}

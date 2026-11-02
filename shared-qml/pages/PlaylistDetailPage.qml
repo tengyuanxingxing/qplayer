@@ -22,6 +22,7 @@ Rectangle {
         page.exitSelectMode()
     }
 
+    readonly property bool unified: player.openSourcePlaylistId === "qplayer:playlist:unified-favorites"
     property string filterText: ""
     property var filteredTracks: {
         var all = player.openSourcePlaylistId !== ""
@@ -37,6 +38,13 @@ Rectangle {
             if (hit) out.push(t)
         }
         return out
+    }
+
+    Menu {
+        id: sourceMenu
+        function entry(provider, label) {
+            return { text: label, action: function() { player.setUnifiedFavoritesSource(provider) } }
+        }
     }
 
     // Swallow taps on empty areas so they don't reach the page beneath.
@@ -62,7 +70,7 @@ Rectangle {
     }
     readonly property bool canHeart: !player.playlistLoading && page.targetHeart
                                      && tracks.list && tracks.list.length > 0
-    readonly property bool canFollow: !player.playlistLoading && player.openSourcePlaylistId !== ""
+    readonly property bool canFollow: !page.unified && !player.playlistLoading && player.openSourcePlaylistId !== "" && !page.unified
     readonly property bool canSubscribe: !player.playlistLoading && !player.playlistOwned
                                          && page.targetMutable
     readonly property bool canChangeCover: !player.playlistLoading && player.playlistOwned
@@ -196,6 +204,53 @@ Rectangle {
                     overflowMenu.open(overflowButton, 0, overflowButton.height)
                 }
             }
+        }
+
+        Text {
+            Layout.fillWidth: true
+            Layout.leftMargin: 20; Layout.rightMargin: 20
+            visible: page.unified
+            text: player.unifiedFavoritesStatus
+            color: Theme.color.onSurfaceVariantSummary
+            font.pixelSize: 12
+            wrapMode: Text.Wrap
+        }
+        RowLayout {
+            Layout.fillWidth: true; Layout.leftMargin: 16; Layout.rightMargin: 16
+            visible: page.unified
+            Button {
+                text: "全部平台"; onClicked: player.setUnifiedFavoritesSource("")
+            }
+            Button {
+                id: favoriteSourceButton
+                text: {
+                    var accounts = player.sourceAccounts
+                    for (var i = 0; i < accounts.length; i++)
+                        if (accounts[i].providerId === player.unifiedFavoritesSource) return accounts[i].sourceName
+                    return "按平台查看"
+                }
+                onClicked: {
+                    var items = []
+                    var accounts = player.sourceAccounts
+                    for (var i = 0; i < accounts.length; i++) {
+                        var account = accounts[i]
+                        if (account.loggedIn) items.push(sourceMenu.entry(account.providerId, account.sourceName))
+                    }
+                    sourceMenu.model = items
+                    sourceMenu.open(favoriteSourceButton, 0, favoriteSourceButton.height)
+                }
+            }
+            IconButton {
+                icon: "sync"; enabled: !player.unifiedFavoritesSyncing
+                onClicked: player.refreshUnifiedFavorites()
+            }
+        }
+
+        Button {
+            Layout.leftMargin: 16
+            visible: page.unified
+            text: player.favoritePreferredSource === "qq" ? "重复歌曲：QQ 优先" : "重复歌曲：网易云优先"
+            onClicked: player.setFavoritePreferredSource(player.favoritePreferredSource === "qq" ? "netease" : "qq")
         }
 
         Item {

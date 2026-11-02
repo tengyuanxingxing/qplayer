@@ -1161,7 +1161,7 @@ public class PlayerControllerPlaybackTest {
     }
 
     @Test
-    public void switchingTracksClearsManualCoverModeWithoutARenderPump() throws Exception {
+    public void switchingTracksKeepsChosenPlaybackPageWithoutARenderPump() throws Exception {
         String oldBase = AppDirs.base();
         String oldCacheBase = AppDirs.cacheBase();
         PlayerController controller = null;
@@ -1181,7 +1181,7 @@ public class PlayerControllerPlaybackTest {
             assertTrue(Boolean.TRUE.equals(controller.coverModeManual.peek()));
 
             controller.playQueueIndex(1);
-            assertFalse("next track must leave cover-only mode so new lyrics can show",
+            assertTrue("next track preserves the chosen cover page",
                     Boolean.TRUE.equals(controller.coverModeManual.peek()));
             assertEquals("two", controller.title.peek());
         } finally {
@@ -1238,6 +1238,20 @@ public class PlayerControllerPlaybackTest {
             AppDirs.setBase(oldBase);
             AppDirs.setCacheBase(oldCacheBase);
         }
+    }
+
+    @Test
+    public void aSinglePlayingArtistOpensAboveThePlaybackLayer() throws Exception {
+        String oldBase=AppDirs.base(), oldCache=AppDirs.cacheBase(); PlayerController controller=null;
+        try {
+            Path dir=temporaryFolder.newFolder("single-playing-artist").toPath();
+            AppDirs.setBase(dir.toString());AppDirs.setCacheBase(dir.resolve("cache").toString());
+            controller=new PlayerController(new FakeAudioBackend(),track->{},NeteaseClient.INSTANCE);
+            controller.playingArtistIdsCsv.set("qq:artist:sample");controller.playingArtistNamesCsv.set("Artist");
+            controller.setLyricsOpen(true);controller.openPlayingArtist();
+            assertFalse(controller.lyricsOpen.peek());assertTrue(controller.artistPageOpen.peek());
+            assertEquals("qq:artist:sample",controller.openSourceArtistId.peek());
+        } finally {if(controller!=null)lifecycle.close(controller);AppDirs.setBase(oldBase);AppDirs.setCacheBase(oldCache);}
     }
 
     private static dev.t1m3.qplayer.media.Playlist playlist(String id, String name) {

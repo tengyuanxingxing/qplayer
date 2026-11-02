@@ -23,7 +23,7 @@ public enum ProviderCapability {
      * implement it replace the whole list server-side anyway. */
     PLAYLIST_REORDER("playlistReorder"),
     HEART_RECOMMENDATION("heartRecommendation"), SHARE("share"),
-    MATCH_SONG("matchSong"), LOGIN("login"),
+    MATCH_SONG("matchSong"), LOGIN("login"), COMMENTS("comments"),
     /** Manifest-only compatibility for pre-migration packages. The host does not
      * route or implement this handler; current plugins own the feature through
      * custom UI, backgroundTick and generic playback services. */

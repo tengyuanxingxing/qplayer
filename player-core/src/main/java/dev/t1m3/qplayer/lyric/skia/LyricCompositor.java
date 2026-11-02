@@ -64,7 +64,7 @@ public final class LyricCompositor {
 
     // Reserved height (logical px) for the lyric-page transport bar at the bottom
     // (portrait, where the transport sits under the lyrics).
-    private static final float L_TRANSPORT_H = 136f;
+    private static final float L_TRANSPORT_H = 192f;
     // Landscape lyric column insets: the column moves to the right half and the
     // cover + transport live in the QML chrome on the left, so the column can run
     // nearly the full height. Kept in sync with LyricOverlay.qml and lyricsScrollable.
@@ -92,7 +92,7 @@ public final class LyricCompositor {
     // instead of reaching the real QML controls. Grown with the row: 56 for one
     // button, 108 once the cover-mode button joined it, now 154 for three
     // (3 x 40px + two 6px gaps + the 6px margin, plus slack).
-    private static final float OFFSET_BTN_CORNER_W = 154f;
+    private static final float OFFSET_BTN_CORNER_W = 200f;
     private static final float OFFSET_BTN_CORNER_H = 52f;
     // The same carve-out on the other side, for the close button. Only needed in
     // the full-width layout: everywhere else the scrollable band starts at the
@@ -100,6 +100,9 @@ public final class LyricCompositor {
     private static final float BACK_BTN_CORNER_W = 56f;
 
     private final LyricRenderer lyricRenderer = new LyricRenderer();
+    private Shader portraitBackdrop;
+    private String portraitBackdropKey = "";
+    private final Paint portraitBackdropPaint = new Paint();
     private final FluidBackground fluidBg = new FluidBackground(System.nanoTime());
     private final TemperaHostPage temperaPage = new TemperaHostPage();
     private TemperaTuning temperaTuning;
@@ -188,6 +191,7 @@ public final class LyricCompositor {
     private float lyColW = -1f, lyColH = -1f, lyColTopY = -1f, lyColLeft = -1f;
     // Last published cover-only flag, read by lyricsScrollable off the input thread.
     private boolean coverOnlyCached;
+    private boolean infoPageCached;
     // Eased 0..1 between the classic (lyrics in the right half) and full-width
     // layouts. Drives the QML chrome crossfade and the column's fade; the column's
     // GEOMETRY follows fullWidthApplied instead, which flips once at the midpoint.
@@ -208,6 +212,8 @@ public final class LyricCompositor {
     public void dispose() {
         temperaPage.dispose();
         fluidBg.dispose();
+        if (portraitBackdrop != null) portraitBackdrop.close();
+        portraitBackdropPaint.close();
         lyricRenderer.dispose();
         if (lyFadeShader != null) {
             lyFadeShader.close();
@@ -256,6 +262,17 @@ public final class LyricCompositor {
      *  page must be fully open and the point inside the lyric band. In landscape the
      *  column is the right half only (the left half holds the QML cover + transport),
      *  and a cover-only track has no column to scroll. */
+    public boolean playbackSwipeable(float x, float y, float width, float height, float inset) {
+        if (width >= height || lyricSlide < 0.99f) return false;
+        if (infoPageCached) return y >= inset + 54f && y <= height - L_TRANSPORT_H;
+        if (!coverOnlyCached) return lyricsScrollable(x, y, width, height, inset);
+        for (Item card : lyricNotificationCards) {
+            if (notificationContains(card, x, y)) return false;
+        }
+        float size = Math.max(96f, Math.min(Math.min(width - 56f, height - inset - 374f), 420f));
+        return y >= inset + 94f && y <= inset + 94f + size;
+    }
+
     public boolean lyricsScrollable(float x, float y, float surfaceWLogical,
                                     float surfaceHeightLogical, float topInset) {
         if (lyricSlide < 0.99f || !lyricRenderer.hasLines()) return false;
@@ -585,6 +602,7 @@ public final class LyricCompositor {
         // button / tap-cover-to-return) — see PlayerController.coverModeManual.
         boolean coverOnly = Boolean.TRUE.equals(controller.lyricsCoverOnly.peek())
                 || Boolean.TRUE.equals(controller.coverModeManual.peek());
+        infoPageCached = !landscape && controller.playbackPage.peek() == 0;
         coverOnlyCached = coverOnly;
         // Full-width is a wide-window layout, and it has nothing to say about a
         // track with no lyrics — that view is the cover, which this mode removes.
@@ -679,8 +697,12 @@ public final class LyricCompositor {
         }
         int bgClip = canvas.save();
         canvas.clipRect(backdropClipRect);
-        fluidBg.render(canvas, ctx, uiScale, w, h, cover, lyCoverKey,
-                System.nanoTime(), bgStatic, bgStyle, bgSaturation);
+        if (!landscape) {
+            drawPortraitBackdrop(canvas, controller.coverSeed.peek(), coverOnly, w, h);
+        } else {
+            fluidBg.render(canvas, ctx, uiScale, w, h, cover, lyCoverKey,
+                    System.nanoTime(), bgStatic, bgStyle, bgSaturation);
+        }
         canvas.restoreToCount(bgClip);
 
         // 2) the lyrics column. The title (top band) and transport (bottom band) are
@@ -749,6 +771,7 @@ public final class LyricCompositor {
             float cx = colLeft + (w - colLeft) * 0.5f;
             float cy = colTopY + colH * 0.5f;
             int zc = canvas.save();
+            if (!landscape) canvas.translate(w * (1f - lyricShow), 0f);
             canvas.translate(cx, cy);
             canvas.scale(s, s);
             canvas.translate(-cx, -cy);
@@ -783,6 +806,28 @@ public final class LyricCompositor {
         }
 
         canvas.restoreToCount(sc);
+    }
+
+    /** A quiet cover-colour gradient. Reuse the shader until colour, view or size changes. */
+    private void drawPortraitBackdrop(Canvas canvas, String seed, boolean coverOnly, float w, float h) {
+        String key = seed + "|" + coverOnly + "|" + w + "|" + h;
+        if (!key.equals(portraitBackdropKey) || portraitBackdrop == null) {
+            int rgb = 0x618AC0;
+            try { if (seed != null && !seed.isEmpty()) rgb = (int) Long.parseLong(seed.replace("#", ""), 16); }
+            catch (NumberFormatException ignored) {}
+            int r = (rgb >> 16) & 255, g = (rgb >> 8) & 255, b = rgb & 255;
+            int chroma = Math.max(r, Math.max(g, b)) - Math.min(r, Math.min(g, b));
+            float shade = chroma < 20 ? (coverOnly ? 0.06f : 0.04f) : (coverOnly ? 0.50f : 0.31f);
+            int top = 0xFF000000 | ((int)(r * shade) << 16) | ((int)(g * shade) << 8) | (int)(b * shade);
+            int bottom = 0xFF000000 | ((int)(r * shade * 0.65f) << 16)
+                    | ((int)(g * shade * 0.65f) << 8) | (int)(b * shade * 0.65f);
+            if (portraitBackdrop != null) portraitBackdrop.close();
+            portraitBackdrop = Shader.makeLinearGradient(0f, 0f, w * 0.3f, h,
+                    new int[]{top, bottom}, new float[]{0f, 1f});
+            portraitBackdropPaint.setShader(portraitBackdrop);
+            portraitBackdropKey = key;
+        }
+        canvas.drawRect(backdropClipRect, portraitBackdropPaint);
     }
 
     // Progressive edge blur: draw a uniformly blurred column, then overlay a sharp copy

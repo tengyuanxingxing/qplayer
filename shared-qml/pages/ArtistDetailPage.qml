@@ -1,279 +1,138 @@
 import QtQuick
 import QtQuick.Layouts
 import miuix.Core
-import "."
 import "../components"
 
-// Drill-in artist view: header with back + name, then profile (avatar + bio),
-// an album grid, and hot songs -- all one Flickable with absolute positioning,
-// the same layout primitive HomePage.qml uses to mix a grid with a song list
-// (a real Repeater-in-Layout can't host two differently-shaped sections).
 Rectangle {
     id: page
     property real bottomContentInset: 0
     signal back()
     signal home()
     color: Theme.color.surface
-
-    property bool loadingWatch: player.artistLoading
-    onLoadingWatchChanged: if (player.artistLoading) { scroller.contentY = 0; page.bioExpanded = false }
-
-    // Swallow taps on empty areas so they don't reach the page beneath.
+    property bool albumsTab: false
+    property string albumFilter: "all"
+    property string songQuery: ""
+    property bool filtersOpen: false
+    property string artistWatch: player.openSourceArtistId
+    onArtistWatchChanged: { albumsTab = false; albumFilter = "all"; songQuery = ""; filtersOpen = false }
+    property var allSongs: player.openSourceArtistId !== "" ? player.sourceArtistSongs : player.artistSongs
+    property var allAlbums: player.openSourceArtistId !== "" ? player.sourceArtistAlbums : player.artistAlbums
+    property var songs: {
+        var rows = page.allSongs || [], out = [], q = page.songQuery.trim().toLowerCase()
+        for (var i=0; i<rows.length; i++) if (!q || (rows[i].name || "").toLowerCase().indexOf(q)>=0) out.push(rows[i])
+        return out
+    }
+    property var albums: {
+        var rows = page.allAlbums || [], out = []
+        for (var i=0; i<rows.length; i++) if (page.albumFilter === "all" || rows[i].releaseType === page.albumFilter) out.push(rows[i])
+        return out
+    }
+    function playSong(id) {
+        for(var i=0;i<page.allSongs.length;i++) if(String(page.allSongs[i].id) === String(id)) { player.playArtistSong(i); return }
+    }
+    function filterLabel() {
+        if (page.albumFilter === "album") return "专辑"
+        if (page.albumFilter === "live") return "现场专辑"
+        if (page.albumFilter === "ep") return "EP"
+        if (page.albumFilter === "single") return "单曲"
+        return "全部"
+    }
     MouseArea { anchors.fill: parent }
-
-    property real pad: 16
-    property real gap: 12
-    property real avatarSize: 72
-    property real profileTop: 12
-    property bool bioExpanded: false
-    // Two invisible measuring probes (same width/font as the real bio Text
-    // below) compare a 3-line-capped render against the unclamped one -- the
-    // same "measure with a hidden Text, don't guess from char count" idiom
-    // AlbumCard's nameProbe uses, just for wrapped height instead of width.
-    property real bioWidth: Math.max(0, width - 2 * pad)
-    property bool bioOverflows: bioFullProbe.contentHeight > bioCappedProbe.contentHeight + 1
-    // Room reserved under the avatar for the bio (collapsed 3 lines, or the
-    // full text once expanded) plus the expand/collapse toggle when it's needed.
-    property real descReserve: player.artistBriefDesc === "" ? 0
-        : 10 + (bioExpanded ? bioFullProbe.contentHeight : bioCappedProbe.contentHeight)
-              + (bioOverflows ? 28 : 0)
-    property real profileH: avatarSize + descReserve
-    property var visibleAlbums: player.openSourceArtistId !== ""
-                                ? player.sourceArtistAlbums : player.artistAlbums
-    property var visibleSongs: player.openSourceArtistId !== ""
-                               ? player.sourceArtistSongs : player.artistSongs
-    property int albumCount: visibleAlbums ? visibleAlbums.length : 0
-    property int songCount: visibleSongs ? visibleSongs.length : 0
-    property real minAlbumTile: 130
-    property int albumCols: Math.max(2, Math.floor((width - 2 * pad + gap) / (minAlbumTile + gap)))
-    property real albumTile: (width - 2 * pad - (albumCols - 1) * gap) / albumCols
-    property real albumCardH: albumTile + 56
-    property real albumsHdrY: profileTop + profileH + 8
-    property real albumsTop: albumsHdrY + (albumCount > 0 ? 40 : 0)
-    property real albumsGridH: albumCount > 0 ? Math.ceil(albumCount / albumCols) * (albumCardH + gap) : 0
-    property real songsHdrY: albumsTop + albumsGridH + (albumCount > 0 ? 4 : 0)
-    property real songsTop: songsHdrY + (songCount > 0 ? 40 : 0)
-    property real rowH: 64
-
     ColumnLayout {
-        anchors.fill: parent
-        spacing: 0
-
-        // Custom header: qml4j can't set a sub-property of TopAppBar's
-        // navigationIcon alias (navigationIcon.icon) via grouped binding.
-        RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            Layout.leftMargin: 4
-            Layout.rightMargin: 16
-            spacing: 4
-            PageHeaderButtons {
-                Layout.alignment: Qt.AlignVCenter
-                onHome: page.home()
-                onBack: page.back()
+        anchors.fill: parent; spacing: 0
+        Item {
+            Layout.fillWidth: true; Layout.preferredHeight: 56
+            PageHeaderButtons { x:4; onBack:page.back(); onHome:page.home() }
+            Text { x:100;y:16;width:parent.width-116;text:player.artistName;font.pixelSize:20;elide:Text.ElideRight;color:Theme.color.onSurfaceColor }
+        }
+        Rectangle {
+            Layout.fillWidth:true; Layout.preferredHeight:180
+            color:Theme.color.primaryContainer
+            CoverImage { id:portrait;x:20;y:20;width:88;height:88;radius:44;source:player.artistCoverPath;icon:"person" }
+            Text { x:128;y:28;width:parent.width-148;text:player.artistName;font.pixelSize:28;font.weight:Font.DemiBold;color:Theme.color.onSurfaceColor;elide:Text.ElideRight }
+            Text { x:128;y:76;width:parent.width-148;text:"歌曲 / 专辑";font.pixelSize:14;color:Theme.color.onSurfaceVariantSummary }
+            Text { x:20;y:126;width:parent.width-40;text:player.artistBriefDesc;maximumLineCount:2;wrapMode:Text.Wrap;elide:Text.ElideRight;font.pixelSize:13;color:Theme.color.onSurfaceVariantSummary }
+        }
+        TabRowWithContour {
+            objectName:"artistContentTabs"
+            Layout.fillWidth:true; Layout.preferredHeight:48
+            tabs:["歌曲", "专辑"]
+            selectOnClick:false; selectedTabIndex:page.albumsTab?1:0
+            onTabSelected:(index)=>page.albumsTab=(index===1)
+        }
+        Item {
+            Layout.fillWidth:true;Layout.preferredHeight:60
+            TextField {
+                x:16;y:6;width:parent.width-32
+                visible:!page.albumsTab;enabled:visible
+                label:"搜索此歌手的歌曲";leadingIcon:"search"
+                onTextChanged:page.songQuery=text
             }
-            Text {
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-                text: player.artistName
-                color: Theme.color.onSurfaceColor
-                font.family: Theme.typography.titleLarge.family
-                font.pixelSize: Theme.typography.titleLarge.size
-                verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
+            Button {
+                objectName:"artistAlbumFilterButton"
+                x:16;y:6;visible:page.albumsTab;enabled:visible
+                text:"筛选："+page.filterLabel()+"  ▾"
+                onClicked:page.filtersOpen=true
             }
         }
-
         Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-
-            Flickable {
-                id: scroller
-                anchors.fill: parent
-                visible: !player.artistLoading
-                clip: true
-                contentWidth: width
-                contentHeight: page.songsTop + page.songCount * page.rowH + 24 + page.bottomContentInset
-
-                Item {
-                    width: scroller.width
-                    height: scroller.contentHeight
-                    cachedLayout: true
-
-                    CoverImage {
-                        id: avatar
-                        x: page.pad; y: page.profileTop
-                        width: page.avatarSize; height: page.avatarSize
-                        radius: page.avatarSize / 2
-                        icon: "person"
-                        iconSize: 32
-                        fadeIn: true
-                        source: player.artistCoverPath
-                    }
-
-                    MarqueeText {
-                        id: nameText
-                        anchors.left: avatar.right
-                        anchors.leftMargin: 14
-                        anchors.right: parent.right
-                        anchors.rightMargin: page.pad
-                        anchors.top: avatar.top
-                        anchors.topMargin: 4
-                        height: 26
-                        text: player.artistName
-                        textColor: Theme.color.onSurfaceColor
-                        fontSize: 18
-                        fontWeight: Font.Medium
-                    }
-
-                    Text {
-                        anchors.left: avatar.right
-                        anchors.leftMargin: 14
-                        anchors.right: parent.right
-                        anchors.rightMargin: page.pad
-                        anchors.top: nameText.bottom
-                        anchors.topMargin: 4
-                        text: (page.albumCount > 0 || page.songCount > 0)
-                              ? i18n.t("artist.counts", page.albumCount, page.songCount)
-                              : ""
-                        color: Theme.color.onSurfaceVariantColor
-                        fontSize: 13
-                        elide: Text.ElideRight
-                    }
-
-                    // Hidden measuring probes -- never painted, just used to compare
-                    // the capped-vs-full wrapped height (see page.bioOverflows above).
-                    Text {
-                        id: bioFullProbe
-                        visible: false
-                        width: page.bioWidth
-                        text: player.artistBriefDesc
-                        wrapMode: Text.WrapAnywhere
-                        fontSize: 12
-                    }
-                    Text {
-                        id: bioCappedProbe
-                        visible: false
-                        width: page.bioWidth
-                        text: player.artistBriefDesc
-                        wrapMode: Text.WrapAnywhere
-                        maximumLineCount: 3
-                        elide: Text.ElideRight
-                        fontSize: 12
-                    }
-
-                    Text {
-                        id: bioText
-                        anchors.left: parent.left
-                        anchors.leftMargin: page.pad
-                        anchors.right: parent.right
-                        anchors.rightMargin: page.pad
-                        anchors.top: avatar.bottom
-                        anchors.topMargin: 10
-                        visible: player.artistBriefDesc !== ""
-                        text: player.artistBriefDesc
-                        // WrapAnywhere, not WordWrap: some bios overflowed
-                        // instead of wrapping -- a long CJK run with no break
-                        // point qml4j's word-boundary detection could find
-                        // (see [[qml4j-cjk-wordwrap-fix]] for the underlying
-                        // engine bug/PR; WrapAnywhere sidesteps needing that
-                        // detection to be complete at all).
-                        wrapMode: Text.WrapAnywhere
-                        maximumLineCount: page.bioExpanded ? 9999 : 3
-                        elide: page.bioExpanded ? Text.ElideNone : Text.ElideRight
-                        color: Theme.color.onSurfaceVariantColor
-                        fontSize: 12
-                    }
-
-                    // Expand/collapse -- bottom-right of the bio block, only shown once it
-                    // actually overflows 3 lines.
-                    Text {
-                        id: bioToggle
-                        visible: page.bioOverflows
-                        anchors.right: parent.right
-                        anchors.rightMargin: page.pad
-                        anchors.top: bioText.bottom
-                        anchors.topMargin: 2
-                        height: 24
-                        text: i18n.t(page.bioExpanded ? "common.collapse" : "common.expand")
-                        color: Theme.color.primary
-                        fontSize: 12
-                        font.weight: Font.Medium
-                    }
-                    MouseArea {
-                        anchors.fill: bioToggle
-                        visible: page.bioOverflows
-                        onClicked: page.bioExpanded = !page.bioExpanded
-                    }
-
-                    Text {
-                        visible: page.albumCount > 0
-                        x: page.pad; y: page.albumsHdrY; height: 40
-                        verticalAlignment: Text.AlignVCenter
-                        text: i18n.t("artist.albums")
-                        color: Theme.color.primary
-                        fontSize: 16
-                    }
-
-                    Repeater {
-                        model: page.visible ? page.visibleAlbums : null
-                        windowStart: Math.max(0, Math.min(Math.ceil(page.albumCount / page.albumCols) - Math.ceil(scroller.height / (page.albumCardH + page.gap)) - 3,
-                            Math.floor((scroller.contentY - page.albumsTop) / (page.albumCardH + page.gap)) - 1)) * page.albumCols
-                        windowCount: (Math.ceil(scroller.height / (page.albumCardH + page.gap)) + 3) * page.albumCols
-                        AlbumCard {
-                            albumId: modelData.id
-                            tile: page.albumTile
-                            x: page.pad + (index % page.albumCols) * (page.albumTile + page.gap)
-                            y: page.albumsTop + Math.floor(index / page.albumCols) * (page.albumCardH + page.gap)
-                            name: modelData.name
-                            count: modelData.trackCount
-                            coverUrl: modelData.coverUrl
-                            coverThumbPath: modelData.coverThumbPath || ""
-                            onClicked: player.openMediaAlbum("" + modelData.id)
-                        }
-                    }
-
-                    Text {
-                        visible: page.songCount > 0
-                        x: page.pad; y: page.songsHdrY; height: 40
-                        verticalAlignment: Text.AlignVCenter
-                        text: i18n.t("artist.topSongs")
-                        color: Theme.color.primary
-                        fontSize: 16
-                    }
-
-                    Repeater {
-                        model: page.visible ? page.visibleSongs : null
-                        windowStart: Math.max(0, Math.min(page.songCount - Math.ceil(scroller.height / page.rowH) - 7,
-                            Math.floor((scroller.contentY - page.songsTop) / page.rowH) - 3))
-                        windowCount: Math.ceil(scroller.height / page.rowH) + 7
-                        SongRow {
-                            width: scroller.width
-                            y: page.songsTop + index * page.rowH
-                            rowTitle: modelData.name
-                            rowArtist: modelData.artist
-                            rowArtistId: modelData.artistMediaId || modelData.artistId || 0
-                            rowArtistIdsCsv: modelData.artistIdsCsv || ""
-                            rowArtistNamesCsv: modelData.artistNamesCsv || ""
-                            coverThumbPath: modelData.coverThumbPath || ""
-                            song: modelData
-                            onActivated: player.playArtistSong(index)
-                        }
-                    }
-                }
-
-                ViewportScrollBar {
-                    target: scroller
-                    bottomInset: page.bottomContentInset
-                }
+            Layout.fillWidth:true;Layout.fillHeight:true
+            VirtualSongList {
+                id:tracks
+                anchors.fill:parent;visible:!page.albumsTab;enabled:visible
+                bottomContentInset:page.bottomContentInset
+                list:page.songs;showLikeButton:true
+                loadMoreEnabled:player.artistSongsHasMore && !player.artistMoreLoading
+                onLoadMoreRequested:player.loadMoreArtist("songs")
+                onActivated:page.playSong(tracks.list[tracks.activatedIndex].id)
             }
-
-            LoadingIndicator {
-                objectName: "detailLoadingIndicator"
-                anchors.centerIn: parent
-                visible: player.artistLoading
-                running: player.artistLoading
+            Flickable {
+                id:albumList
+                objectName:"artistAlbumList"
+                anchors.fill:parent;visible:page.albumsTab;enabled:visible
+                clip:true;contentWidth:width
+                contentHeight:page.albums.length*92+72+page.bottomContentInset
+                property string filterWatch:page.albumFilter
+                onFilterWatchChanged:contentY=0
+                Repeater {
+                    model:page.albumsTab?page.albums:null
+                    windowStart:Math.max(0,Math.floor(albumList.contentY/92)-2)
+                    windowCount:Math.ceil(albumList.height/92)+5
+                    Item {
+                        objectName:"artistAlbumRow"
+                        width:albumList.width;height:92;y:index*92
+                        CoverImage { x:20;y:10;width:72;height:72;radius:12;source:modelData.coverUrl }
+                        Text { x:110;y:18;width:parent.width-138;text:modelData.name;font.pixelSize:19;elide:Text.ElideRight;color:Theme.color.onSurfaceColor }
+                        Text { x:110;y:52;width:parent.width-138;text:(modelData.publishTimeMs>0?new Date(modelData.publishTimeMs).toISOString().slice(0,10)+"  ":"")+modelData.trackCount+" 首";font.pixelSize:13;color:Theme.color.onSurfaceVariantSummary }
+                        Ripple { anchors.fill:parent;onClicked:if(tapAllowed)player.openMediaAlbum(modelData.id) }
+                    }
+                }
+                Button {
+                    x:20;y:page.albums.length*92+12
+                    visible:player.artistAlbumsHasMore
+                    enabled:!player.artistMoreLoading
+                    text:player.artistMoreLoading?"加载中…":"加载更多专辑"
+                    onClicked:player.loadMoreArtist("albums")
+                }
+                Text { x:20;y:30;visible:page.albums.length===0;text:page.albumFilter==="all"?"暂无专辑":"当前已加载专辑中没有此分类，可加载更多";width:parent.width-40;wrapMode:Text.Wrap;color:Theme.color.onSurfaceVariantSummary }
+            }
+            LoadingIndicator { anchors.centerIn:parent;visible:player.artistLoading;running:visible }
+        }
+    }
+    MouseArea { anchors.fill:parent;visible:page.filtersOpen;enabled:visible;z:20;onClicked:page.filtersOpen=false }
+    Rectangle {
+        objectName:"artistAlbumFilterSheet"
+        visible:page.filtersOpen;enabled:visible;z:21
+        anchors.left:parent.left;anchors.right:parent.right;anchors.bottom:parent.bottom
+        anchors.bottomMargin:page.bottomContentInset
+        height:320+settings.bottomInset;radius:24;color:Theme.color.surfaceContainerHigh
+        Repeater {
+            model:[{key:"all",label:"全部"},{key:"album",label:"专辑"},{key:"live",label:"现场专辑"},{key:"ep",label:"EP"},{key:"single",label:"单曲"}]
+            Item {
+                x:16;y:16+index*58;width:parent.width-32;height:58
+                Text { x:12;y:16;text:modelData.label;font.pixelSize:19;color:Theme.color.onSurfaceColor }
+                Icon { anchors.right:parent.right;anchors.rightMargin:16;y:16;name:"check_circle";color:Theme.color.primary;visible:page.albumFilter===modelData.key }
+                Ripple { anchors.fill:parent;onClicked:if(tapAllowed){page.albumFilter=modelData.key;page.filtersOpen=false} }
             }
         }
     }

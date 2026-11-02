@@ -152,9 +152,13 @@ public final class PluginProviderService {
     }
 
     public CompletableFuture<Artist> artist(MediaId id) {
+        return artistPage(id, "", "all");
+    }
+    public CompletableFuture<Artist> artistPage(MediaId id, String cursor, String section) {
         id.requireKind(MediaKind.ARTIST);
-        return manager.invoke(id.provider(), ProviderCapability.ARTIST_DETAILS.wireName(),
-                Collections.<String, Object>singletonMap("id", id.nativeId()))
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("id", id.nativeId()); args.put("cursor", cursor); args.put("section", section); args.put("limit", 50);
+        return manager.invoke(id.provider(), ProviderCapability.ARTIST_DETAILS.wireName(), args)
                 .thenApply(raw -> parseArtist(id.provider(), map(raw, "artist")));
     }
 
@@ -360,6 +364,29 @@ public final class PluginProviderService {
         return songList(seedSong.provider(), ProviderCapability.HEART_RECOMMENDATION, arguments);
     }
 
+    public CompletableFuture<Page<dev.t1m3.qplayer.media.SongComment>> comments(MediaId id, String cursor, String sort) {
+        id.requireKind(MediaKind.SONG);
+        Map<String, Object> args = new LinkedHashMap<>();
+        args.put("id", id.nativeId()); args.put("cursor", cursor == null ? "" : cursor);
+        args.put("limit", 20); args.put("sort", "hot".equals(sort) ? "hot" : "new");
+        return manager.invoke(id.provider(), ProviderCapability.COMMENTS.wireName(), args).thenApply(raw -> {
+            Map<String, Object> value = map(raw, "comments response");
+            Page<dev.t1m3.qplayer.media.SongComment> page = new Page<>();
+            for (Object entry : boundedList(value.get("items"), "comments", 50)) {
+                Map<String, Object> row = map(entry, "comment");
+                dev.t1m3.qplayer.media.SongComment comment = new dev.t1m3.qplayer.media.SongComment();
+                comment.id = boundedString(row.get("id"), 256, "comment id", true);
+                comment.author = boundedString(row.get("author"), 256, "comment author", false);
+                comment.content = boundedString(row.get("content"), 8000, "comment content", true);
+                comment.time = boundedString(row.get("time"), 128, "comment time", false);
+                comment.likeCount = boundedLong(row.get("likeCount"), 0, Long.MAX_VALUE, "comment likes");
+                page.items.add(comment);
+            }
+            page.nextCursor = boundedString(value.get("nextCursor"), MAX_CURSOR_CHARS, "comments cursor", false);
+            return page;
+        });
+    }
+
     public CompletableFuture<String> share(MediaId id) {
         Map<String, Object> arguments = new LinkedHashMap<>();
         arguments.put("id", id.nativeId());
@@ -527,6 +554,9 @@ public final class PluginProviderService {
         song.coverUrl = song.artworkUrl;
         song.coverThumbPath = artworkThumb(provider, object, song.artworkUrl);
         song.isrc = optionalString(object.get("isrc"));
+        song.publishTimeMs = longValue(object.get("publishTimeMs"), 0L);
+        song.credits = boundedString(object.get("credits"), MAX_DESCRIPTION_CHARS, "song credits", false);
+        song.genre = boundedString(object.get("genre"), 256, "song genre", false);
         song.playable = !Boolean.FALSE.equals(object.get("playable"));
         song.trial = Boolean.TRUE.equals(object.get("trial"));
         song.restricted = Boolean.TRUE.equals(object.get("restricted"));
@@ -607,6 +637,7 @@ public final class PluginProviderService {
         album.coverUrl = album.artworkUrl;
         album.coverThumbPath = artworkThumb(provider, object, album.artworkUrl);
         album.publishTimeMs = longValue(object.get("publishTimeMs"), 0L);
+        album.releaseType = dev.t1m3.qplayer.media.AlbumCategory.of(boundedString(object.get("releaseType"), 128, "album release type", false), album.name);
         album.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "album.description", false);
         album.trackCount = (int) boundedLong(object.get("trackCount"), 0L,
@@ -642,6 +673,8 @@ public final class PluginProviderService {
         artist.coverThumbPath = artworkThumb(provider, object, artist.artworkUrl);
         artist.description = boundedString(object.get("description"),
                 MAX_DESCRIPTION_CHARS, "artist.description", false);
+        artist.nextSongCursor = boundedString(object.get("nextSongCursor"), MAX_CURSOR_CHARS, "artist song cursor", false);
+        artist.nextAlbumCursor = boundedString(object.get("nextAlbumCursor"), MAX_CURSOR_CHARS, "artist album cursor", false);
         artist.albumCount = (int) boundedLong(object.get("albumCount"), 0L,
                 1_000_000L, "artist.albumCount");
         artist.songCount = (int) boundedLong(object.get("songCount"), 0L,

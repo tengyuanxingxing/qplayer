@@ -353,6 +353,7 @@ public class LyricRenderer {
     }
 
     public void setLyrics(List<LyricLine> newLines) {
+        hitRegions.clear();
         clearLayoutCache();
         boolean linearPlainLrc = Boolean.TRUE.equals(LyricConfig.instance.linearAnimForPlainLrc.getValue());
         LyricTimeline.Prepared prepared = LyricTimeline.prepare(newLines, linearPlainLrc);
@@ -483,8 +484,11 @@ public class LyricRenderer {
         return litBandResult;
     }
 
+    private final LyricHitRegions hitRegions = new LyricHitRegions();
+
     public void render(Canvas canvas, float leftX, float topY,
                        float columnWidth, float columnHeight, long positionMs) {
+        hitRegions.clear();
         // Snapshot mutable state so a concurrent setLyrics() mid-frame can't
         // replace lines/groups/lineToGroup underneath us (ArrayIndexOutOfBounds).
         final java.util.List<LyricLine> lines = this.lines;
@@ -1184,6 +1188,12 @@ public class LyricRenderer {
 
                 float wrapRowH = (r == 0) ? rowHeight : (isBg ? rowHeightBgWrap : rowHeightLyricWrap);
                 float rowBaselineY = lineYTop + rowHeight + r * wrapRowH - descent - 4f;
+                if (!line.syllables.isEmpty() && shapedRow.blob != null) {
+                    io.github.humbleui.types.Rect bounds = shapedRow.blob.getBounds();
+                    hitRegions.add(rowX - lead + bounds.getLeft(), rowBaselineY + bounds.getTop(),
+                            rowX - lead + bounds.getRight(), rowBaselineY + bounds.getBottom(),
+                            anchorX, anchorY, scale, line.startMs());
+                }
                 rowRenderer.drawRow(cachedLayoutSyllables.get(i), shapedRow,
                         rowX - lead, rowBaselineY,
                         ascent, descent, positionMs, baseAlpha, activeK, animatablePerToken, spring,
@@ -1460,6 +1470,12 @@ public class LyricRenderer {
                 float rowX = lineLeft;
                 float wrapRowH = (r == 0) ? rowHeight : wrapH;
                 float rowBaselineY = lineTop + rowHeight + r * wrapRowH - descent - 4f;
+                if (!line.syllables.isEmpty() && shapedRow.blob != null) {
+                    io.github.humbleui.types.Rect bounds = shapedRow.blob.getBounds();
+                    hitRegions.add(rowX - lead + bounds.getLeft(), rowBaselineY + bounds.getTop(),
+                            rowX - lead + bounds.getRight(), rowBaselineY + bounds.getBottom(),
+                            drawX, drawY, scale, line.startMs());
+                }
                 rowRenderer.drawRow(cachedLayoutSyllables.get(i), shapedRow,
                         rowX - lead, rowBaselineY,
                         ascent, descent, positionMs, baseAlpha, fly,
@@ -1660,6 +1676,8 @@ public class LyricRenderer {
     public void scrollByWheel(float notches) {
         userScroll.wheel(notches);
     }
+
+    public long timeAtPoint(float x, float y) { return hitRegions.timeAt(x, y); }
 
     public long timeAtScreenY(float screenY) {
         return userScroll.timeAtScreenY(screenY, lines, lineTopsBuf, cachedLineHeights);
