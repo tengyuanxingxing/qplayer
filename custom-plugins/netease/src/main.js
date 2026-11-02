@@ -1472,6 +1472,32 @@ function favoriteAlbums(args) {
   });
 }
 
+function albumFavoriteStatus(id) {
+  var cursors={},pages=0;
+  function next(cursor) {
+    if(cursors[cursor] || ++pages>100)throw new Error("网易云收藏专辑分页异常，请刷新重试");
+    cursors[cursor]=true;
+    return favoriteAlbums({cursor:cursor}).then(function(page){
+      if(page.items.some(function(album){return album.id===id;}))return true;
+      return page.nextCursor?next(page.nextCursor):false;
+    });
+  }
+  return next("");
+}
+function albumFavorite(args) {
+  var id=String(args.id || ""),op=String(args.operation || "status");
+  if(!/^[1-9][0-9]*$/.test(id))throw new Error("缺少有效专辑 ID");
+  if(["status","add","remove"].indexOf(op)<0)throw new Error("未知收藏专辑操作");
+  if(op==="status")return albumFavoriteStatus(id).then(function(value){return {favorited:value};});
+  return weapi("album/"+(op==="add"?"sub":"unsub"),{id:id}).then(function(body){
+    if(Number(body.code)!==200)throw new Error("网易云未确认收藏专辑操作，请检查登录状态");
+    return albumFavoriteStatus(id);
+  }).then(function(value){
+    if(value!==(op==="add"))throw new Error("网易云尚未确认收藏状态，请刷新后重试");
+    return {favorited:value};
+  });
+}
+
 function comments(args) {
   var offset = Math.max(0, Number(args.cursor || 0));
   var hot = args.sort === "hot";
@@ -1490,6 +1516,7 @@ function comments(args) {
 module.exports = {handlers: {
   comments: comments,
   favoriteAlbums: favoriteAlbums,
+  albumFavorite: albumFavorite,
   hotSearch: hotSearch,
   searchSongs: searchSongs,
   searchAlbums: searchAlbums,

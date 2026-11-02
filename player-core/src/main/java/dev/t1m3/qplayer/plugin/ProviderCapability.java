@@ -7,7 +7,7 @@ public enum ProviderCapability {
     SEARCH_PLAYLISTS("searchPlaylists"),
     SONG_DETAILS("songDetails"), PLAYLIST_DETAILS("playlistDetails"),
     ARTIST_DETAILS("artistDetails"), ALBUM_DETAILS("albumDetails"),
-    FAVORITE_ALBUMS("favoriteAlbums"), HOME("home"), ACCOUNT("account"), USER_PLAYLISTS("userPlaylists"), RECENT("recent"),
+    FAVORITE_ALBUMS("favoriteAlbums"), ALBUM_FAVORITE("albumFavorite"), HOME("home"), ACCOUNT("account"), USER_PLAYLISTS("userPlaylists"), RECENT("recent"),
     RESOLVE_STREAM("resolveStream"), LYRICS("lyrics"), SCROBBLE("scrobble"),
     LIKE("like"), PLAYLIST_MUTATION("playlistMutation"),
     /** Replace a playlist's artwork. Separate from {@link #PLAYLIST_MUTATION}

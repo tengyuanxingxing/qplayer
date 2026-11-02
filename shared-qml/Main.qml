@@ -536,6 +536,13 @@ Rectangle {
                 visible: !app.wide
                 icon: "more_vert"
                 onClicked: compactMenu.open(overflowAction)
+                CircularProgress {
+                    objectName:"updateToolbarProgress"
+                    width:16;height:16;x:26;y:3;strokeWidth:2
+                    visible:player.updateProgress>=0 && player.updateProgress<100
+                    value:Math.max(0,player.updateProgress)/100
+                    Rectangle { anchors.centerIn:parent;width:4;height:4;rotation:45;color:Theme.color.primary }
+                }
             }
         }
     }
@@ -547,6 +554,7 @@ Rectangle {
         }
         model: {
             var items = [
+                {text:"更新状态", trailingText: player.updateProgress>=0?player.updateProgress+"%":(player.updateProgress===-2?"下载失败":"查看"), progress:player.updateProgress>=0?player.updateProgress/100:0, action:function(){updateStatusDialog.open()}},
                 {text: i18n.t("nav.downloaded"), icon: "download", action: function() { player.refreshCachedSongs(); app.replacePage("cachedSongs", 0) }},
                 {text: i18n.t("nav.account"), icon: "account_circle", action: function() { app.replacePage("account", 0) }},
                 {text: i18n.t("sleepTimer.title"), icon: "bedtime", action: function() { app.sleepTimerOpen = true }},
@@ -902,23 +910,17 @@ Rectangle {
     property int updateProgWatch: player.updateProgress
     onUpdateProgWatchChanged: if (player.updateProgress === -2) app.showToast(i18n.t("update.downloadFailed"))
 
-    Rectangle {
-        visible: player.updateProgress >= 0 && player.updateProgress < 100
-        anchors.left: rail.right
-        anchors.right: parent.right
-        anchors.rightMargin: settings.rightInset
-        anchors.bottom: parent.bottom
-        height: 48 + settings.bottomInset
-        color: Theme.color.surfaceContainerHigh
-        z: 9000
-        Text {
-            anchors.horizontalCenter: parent.horizontalCenter
-            anchors.top: parent.top
-            anchors.topMargin: 14
-            text: i18n.t("update.downloading", player.updateProgress)
-            color: Theme.color.onSurfaceColor
-            fontSize: 14
-        }
+    Dialog {
+        id: updateStatusDialog
+        objectName: "updateStatusDialog"
+        title: "更新状态"
+        text: player.updateProgress >= 0 && player.updateProgress < 100 ? "正在下载更新 · " + player.updateProgress + "%" : (player.updateProgress === 100 ? "下载完成，可以安装" : (player.updateProgress === -2 ? "下载失败，可重试" : "当前没有更新下载任务"))
+        acceptText: player.updateProgress === 100 ? "安装更新" : "检查 / 重试"
+        rejectText: "关闭"
+        showNeutralButton: player.updateProgress >= 0 && player.updateProgress < 100
+        neutralText: "取消下载"
+        onNeutral: player.cancelUpdateDownload()
+        onAccepted: { if(player.updateProgress===100)player.startUpdateDownload();else player.checkForUpdateManual() }
     }
 
     ToastStack {

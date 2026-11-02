@@ -180,6 +180,20 @@ public final class PluginProviderService {
                 .thenApply(raw -> parseAlbumPage(provider,raw));
     }
 
+    public CompletableFuture<Boolean> albumFavorite(MediaId albumId, String operation) {
+        albumId.requireKind(MediaKind.ALBUM);
+        if (!"status".equals(operation) && !"add".equals(operation) && !"remove".equals(operation))
+            throw new IllegalArgumentException("invalid album favorite operation");
+        Map<String,Object> arguments = new LinkedHashMap<>();
+        arguments.put("id",albumId.nativeId());
+        arguments.put("operation",operation);
+        return manager.invoke(albumId.provider(), "albumFavorite",arguments).thenApply(raw -> {
+            Object state = map(raw,"album favorite response").get("favorited");
+            if (!(state instanceof Boolean)) throw new PluginExecutionException("album favorite state is missing");
+            return (Boolean)state;
+        });
+    }
+
     public CompletableFuture<List<Playlist>> userPlaylists(String provider, int limit) {
         return manager.invoke(provider, ProviderCapability.USER_PLAYLISTS.wireName(),
                 Collections.<String, Object>singletonMap("limit",
@@ -439,6 +453,10 @@ public final class PluginProviderService {
     private ProviderHome parseHome(String provider, Object raw) {
         Map<String, Object> value = map(raw, "home response");
         ProviderHome home = new ProviderHome();
+        home.recommendationStatus = boundedString(value.get("recommendationStatus"), MAX_LABEL_CHARS, "recommendation status", false);
+        home.dailyStatus = boundedString(value.get("dailyStatus"), MAX_LABEL_CHARS, "daily status", false);
+        Object daily = value.get("dailySongs");
+        if (daily instanceof List) home.dailySongs.addAll(parseSongs(provider,boundedList(daily,"daily songs",100),"daily songs"));
         Object songs = value.get("songs");
         if (songs instanceof List) {
             home.songs.addAll(parseSongs(provider,

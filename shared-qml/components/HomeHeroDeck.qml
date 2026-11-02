@@ -4,22 +4,31 @@ import "."
 
 Flickable {
     id:deck
+    objectName:"homePersonalCards"
     property var songs:[]
-    property real cardWidth:Math.min(330,width-56)
-    contentWidth:cardWidth*3+48;contentHeight:height;clip:true
+    property var dailySongs:[]
+    property string guessStatus:""
+    property string dailyStatus:""
+    property real cardWidth:Math.min(250,width*0.56)
+    contentWidth:cardWidth*2+42;contentHeight:height;clip:true
+    flickableDirection:"HorizontalFlick"
     Repeater {
-        model:3
+        model:2
         Rectangle {
+            property bool daily:index===1
+            property var rows:daily?deck.dailySongs:deck.songs
+            property var first:rows.length?rows[0]:({})
             x:16+index*(deck.cardWidth+10);y:0;width:deck.cardWidth;height:deck.height
-            radius:22;color:index===0?"#8BB9ED":(index===1?"#A8C9BF":"#D9B4CE")
+            radius:22;color:"#8FB8ED"
             CoverImage {
-                anchors.right:parent.right;anchors.rightMargin:16;y:16;width:96;height:96;radius:18
-                source:deck.songs.length>index?(deck.songs[index].coverUrl||deck.songs[index].artworkUrl):""
+                anchors.right:parent.right;anchors.rightMargin:12;y:12;width:parent.width*0.48;height:width;radius:16
+                source:first.coverThumbPath || first.coverUrl || first.artworkUrl || ""
             }
-            Text { x:18;y:20;width:parent.width-146;text:index===0?"猜你喜欢":(index===1?"每日推荐":"音乐探索");wrapMode:Text.Wrap;font.pixelSize:24;font.weight:Font.DemiBold;color:"#12313E" }
-            Text { x:18;anchors.bottom:parent.bottom;anchors.bottomMargin:18;width:parent.width-76;text:deck.songs.length>index?deck.songs[index].name:"发现下一首喜欢";font.pixelSize:16;color:"#173E4B";elide:Text.ElideRight }
-            Icon { anchors.right:parent.right;anchors.rightMargin:20;anchors.bottom:parent.bottom;anchors.bottomMargin:16;name:"play_circle";width:36;height:36;color:"#F8FFFFFF" }
-            Ripple { anchors.fill:parent;clipRadius:22;onClicked:if(tapAllowed)player.playQqGuess(Math.min(index,Math.max(0,deck.songs.length-1))) }
+            Text { x:16;y:17;width:parent.width*0.40;text:daily?"Daily\n30":"For\nYou";font.pixelSize:24;font.weight:Font.DemiBold;color:"#FFFFFF" }
+            Text { x:16;y:parent.height-52;width:parent.width-55;text:daily?"每日30首":"猜你喜欢 · 沉浸刷歌";font.pixelSize:14;font.weight:Font.DemiBold;color:"#FFFFFF";elide:Text.ElideRight }
+            Text { x:16;y:parent.height-30;width:parent.width-55;text:rows.length?(first.name || first.title):(daily?deck.dailyStatus:deck.guessStatus);font.pixelSize:12;color:"#F0FFFFFF";elide:Text.ElideRight }
+            Icon { anchors.right:parent.right;anchors.rightMargin:13;anchors.bottom:parent.bottom;anchors.bottomMargin:15;name:"play_circle";width:30;height:30;color:"#FFFFFF";opacity:rows.length?1:0.5 }
+            Ripple { anchors.fill:parent;clipRadius:22;onClicked:if(tapAllowed){if(rows.length){if(daily)player.playQqDaily(0);else player.playQqGuess(0)}else player.loadHome()} }
         }
     }
 }

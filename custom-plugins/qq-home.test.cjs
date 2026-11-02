@@ -2,7 +2,7 @@ const {test}=require('node:test');
 const assert=require('node:assert/strict');
 const fs=require('node:fs'),vm=require('node:vm');
 
-function plugin(respond) {
+function plugin(respond,identity={code:0,data:{info:{uin:'123'}}}) {
   const requests=[];
   const context=vm.createContext({module:{exports:{}},require:()=>({qrcDecrypt:()=>''}),qplayer:{call:async(method,args)=>{
     if(method==='credentials.get')return JSON.stringify(args.key==='cookies'?{musicid:'123',musickey:'fixture-key',tmeLoginType:2}:{});
@@ -10,6 +10,7 @@ function plugin(respond) {
     if(method==='storage.put')return true;
     if(method==='http.request'){
       const body=JSON.parse(args.body);requests.push(body);
+      if(body.identity)return {status:200,body:JSON.stringify({identity})};
       assert.match(args.headers.Cookie,/musickey=fixture-key/);
       assert.equal(body.comm.uin,'123');assert.equal(body.comm.authst,'fixture-key');assert.equal(body.comm.tmeLoginType,2);
       return {status:200,body:JSON.stringify(await respond(body))};
@@ -25,7 +26,7 @@ test('QQ home returns playable personal-radio tracks using the QQ account, indep
     if(!body.guess)throw Error('playlist endpoint offline');
     assert.equal(body.comm.ct,19);assert.equal(body.comm.cv,0);
     assert.equal(body.guess.module,'music.radioProxy.MbTrackRadioSvr');
-    assert.equal(body.guess.method,'get_radio_track');assert.deepEqual(Object.keys(body.guess.param),[]);
+    assert.equal(body.guess.method,'get_radio_track');assert.equal(body.guess.param.id,99);assert.equal(body.guess.param.num,5);
     return {guess:{code:0,data:{tracks:[{track_info:{mid:'mid-1',title:'推荐歌曲',singer:[{mid:'artist-mid',name:'歌手'}],album:{pmid:'art'},interval:180}},{mid:'mid-1'},{id:123}]}}};
   });
   const result=await p.home({limit:12});
@@ -44,7 +45,7 @@ test('radio recommendations fill ten three-row groups even when the service caps
   const p=plugin(body=>{
     if(!body.guess)throw Error('playlist endpoint offline');
     assert.equal(body.comm.ct,19);
-    assert.deepEqual(Object.keys(body.guess.param),[]);
+    assert.equal(body.guess.param.id,99);assert.equal(body.guess.param.num,5);
     const start=calls++*5;
     return {guess:{code:0,data:{tracks:Array.from({length:5},(_,i)=>({track_info:{mid:'r'+(start+i),id:start+i+1,title:'Radio '+(start+i)}}))}}};
   });
@@ -53,7 +54,7 @@ test('radio recommendations fill ten three-row groups even when the service caps
   assert.equal(result.songs[29].id,'r29');
 });
 
-test('repeated batches stop without padding duplicates; later network failures preserve real results',async()=>{
+test('repeated batches stop without padding duplicates; later network failures expose an error instead of a partial success',async()=>{
   let calls=0;
   const p=plugin(body=>{
     if(!body.guess)throw Error('playlist endpoint offline');calls++;
@@ -65,7 +66,8 @@ test('repeated batches stop without padding duplicates; later network failures p
     if(!body.guess || attempts++>0)throw Error('network failed');
     return {guess:{data:{tracks:[{mid:'real',title:'real song'}]}}};
   });
-  assert.equal((await broken.home({limit:12})).songs[0].id,'real');
+  const failed=await broken.home({limit:12});
+  assert.equal(failed.songs.length,0);assert.match(failed.recommendationStatus,/network failed/);
 });
 
 
@@ -95,13 +97,12 @@ test('uncached QQ metadata never sends more than ten modules per request',async(
   assert.equal(songs.length,118);assert.equal(sizes.length,12);assert.equal(sizes.at(-1),8);
 });
 
-// Regression: the obsolete station preview must never be the request we send.
-test('fixed five-track station preview is replaced by authenticated stateful account feed',async()=>{
+// The documented account radio endpoint is allowed to cap each response at five.
+test('authenticated account feed retains new batches and skips a repeated batch',async()=>{
   let calls=0;
   const p=plugin(body=>{
     if(!body.guess)throw Error('no playlists');
-    if(body.comm.ct===11 || body.guess.param.id===99)
-      return {guess:{data:{tracks:Array.from({length:5},(_,i)=>({mid:'preview'+i}))}}};
+    assert.equal(body.comm.ct,19);assert.equal(body.guess.param.id,99);
     const batch=calls++; const start=(batch===1?0:batch===0?0:batch-1)*5;
     return {guess:{data:{track:Array.from({length:5},(_,i)=>({mid:'account'+(start+i),title:'personal'}))}}};
   });
@@ -131,4 +132,33 @@ test('QQ authorization preserves the encrypted account id required by album coll
   vm.runInContext(fs.readFileSync(__dirname+'/qqmusic/src/main.js','utf8'),context);
   const profile=await context.qqExchangeCode('fixture-code');
   assert.equal(profile.loggedIn,true);assert.equal(cookies.euin,'encrypted-account');
+});
+
+test('invalid or mismatched account cannot silently become anonymous recommendations',async()=>{
+ for(const identity of [{code:1000},{code:0,data:{info:{uin:'999'}}},{code:0,data:{info:{nick:'No identity'}}},{code:0,data:{info:{uin:'0'}}}]){
+  let radio=0;const p=plugin(body=>{if(body.guess)radio++;return {};},identity);
+  await assert.rejects(p.home({}),/登录态未验证|账号不一致|可核验的账号/);assert.equal(radio,0);
+ }
+});
+test('daily card uses a unique current-day dynamic playlist, not radio substitution',async()=>{
+ const now=Math.floor(Date.now()/1000);let id;
+ const p=plugin(body=>{
+  if(body.guess)return {guess:{data:{tracks:[]}}};
+  if(body.daily)return {daily:{code:0,data:{v_shelf:[{v_niche:[{v_card:[{subtype:510,id:'987654',time:now}]}]}]}}};
+  if(body.req){assert.equal(body.req.method,'CgiGetDiss');id=body.req.param.disstid;return {req:{data:{dirinfo:{songnum:1},songlist:[{mid:'daily',title:'daily'}]}}};}
+  throw Error('unexpected');
+ });
+ const h=await p.home({});assert.equal(id,987654);assert.equal(h.dailySongs[0].id,'daily');assert.equal(h.songs.length,0);
+});
+test('old daily card is rejected without replacing it by a public playlist or radio',async()=>{
+ const p=plugin(body=>body.guess?{guess:{data:{tracks:[]}}}:{daily:{data:{v_shelf:[{v_niche:[{v_card:[{subtype:510,id:'987',time:1}]}]}]}}});
+ const h=await p.home({});assert.equal(h.dailySongs.length,0);assert.match(h.dailyStatus,/过期/);
+});
+
+test('modern QQ web keys and WeChat account IDs take priority over stale aliases',()=>{
+ const context=vm.createContext({module:{exports:{}},require:()=>({}),qplayer:{}});
+ vm.runInContext(fs.readFileSync(__dirname+'/qqmusic/src/main.js','utf8'),context);
+ assert.equal(context.musicKey({qm_keyst:'current',musickey:'old'}),'current');
+ assert.equal(context.musicUin({login_type:2,wxuin:'o00123',uin:'999'}),'123');
+ assert.equal(context.musicUin({musicid:'123',uin:'999'}),'123');
 });

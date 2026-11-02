@@ -356,6 +356,15 @@ Item {
                 anchors.rightMargin: 12
                 spacing: 12
                 
+                CircularProgress {
+                    objectName:"menuUpdateProgress"
+                    visible:typeof itemData.progress !== "undefined"
+                    Layout.preferredWidth:24;Layout.preferredHeight:24
+                    Layout.alignment:Qt.AlignVCenter
+                    value:typeof itemData.progress !== "undefined"?itemData.progress:0
+                    strokeWidth:2
+                    Rectangle { anchors.centerIn:parent;width:6;height:6;rotation:45;color:_colors.onSurfaceColor }
+                }
                 // Icon
                 Text {
                     visible: !!itemData.icon

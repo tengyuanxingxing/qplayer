@@ -27,7 +27,7 @@ Item {
         IconButton { anchors.right:parent.right;anchors.rightMargin:16;y:14;icon:"refresh";onClicked:{player.loadHome();player.refreshHeartExplore();player.refreshPlaybackInfo()} }
         Text { x:20;y:78;text:"推荐";font.pixelSize:25;font.weight:Font.DemiBold;color:Theme.color.onSurfaceColor }
         Rectangle { x:20;y:113;width:42;height:4;radius:2;color:Theme.color.primary }
-        HomeHeroDeck { id:hero;x:0;y:136;width:scroll.width;height:page.songs&&page.songs.length>0?170:0;visible:height>0;songs:page.songs||[] }
+        HomeHeroDeck { id:hero;x:0;y:136;width:scroll.width;height:172;visible:true;songs:page.songs||[];dailySongs:player.qqDailySongs||[];guessStatus:player.qqGuessStatus;dailyStatus:player.qqDailyStatus }
         HomeSongSection {
             id:daily
             x:0;y:hero.y+hero.height+(hero.visible?30:0);width:scroll.width

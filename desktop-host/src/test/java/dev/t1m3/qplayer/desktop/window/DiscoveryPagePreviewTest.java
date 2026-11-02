@@ -55,11 +55,13 @@ public class DiscoveryPagePreviewTest {
                     // entering Home legitimately initiates its first provider refresh.
                     for(int i=0;i<55;i++){view.tickAnimations(System.nanoTime()+1_000_000_000L);settle(view);Thread.sleep(8);}
                     assertEquals(0,prop(view.root(),"page").peekInt());
-                    player.sourceContentActive.set(true);player.qqGuessSongs.set(songs);player.qqGuessStatus.set("来自 QQ 音乐猜你喜欢 · 界面预览");player.heartExploreSongs.set(songs);
+                    player.sourceContentActive.set(true);player.qqGuessSongs.set(songs);player.qqGuessStatus.set("QQ 音乐个性电台 · 界面预览");
+                    player.qqDailySongs.set(songs);player.qqDailyStatus.set("QQ 音乐每日30首 · 界面预览");player.heartExploreSongs.set(songs);
                     player.heartExploreReason.set("根据红心收藏中的歌手探索 · 预览数据");player.title.set("在路上");player.artist.set("示例音乐人");
                     player.playbackRelatedSongs.set(songs);player.coverPath.set(art.toString());player.coverSeed.set("#618AC0");
                     snapshot(view,player,settings,compositor,"home-390",0);
                     assertEquals("source fixture survives home loading",30,player.qqGuessSongs.peek().size());
+                    assertEquals("daily uses its own independent model",30,player.qqDailySongs.peek().size());
                     Item home=view.findByObjectName("homeDiscoveryPage");
                     Item section=view.findByObjectName("homeSongSection");
                     assertTrue("Home section enabled",Boolean.TRUE.equals(prop(section,"pageActive").peek()));

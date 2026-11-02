@@ -102,10 +102,52 @@ public class SettingsPlayerPreviewTest {
                     Album favorite=new Album();favorite.id="qq:album:favorite";favorite.name="真正收藏的专辑 · 预览";favorite.coverThumbPath=art.toString();favorite.artistName="示例音乐人";favorite.trackCount=12;
                     player.favoriteAlbums.set(java.util.Arrays.asList(favorite));player.favoriteAlbumsStatus.set("");settle(view);
                     frame(view,player,settings,compositor,"favorites-albums-390");assertNotNull(view.findByObjectName("favoriteAlbumRow"));
+                    List<Album> manyAlbums=new ArrayList<>();
+                    for(int ai=0;ai<40;ai++){Album a=new Album();a.id="qq:album:test"+ai;a.name="专辑"+ai;a.coverThumbPath=art.toString();a.artistName="示例音乐人";manyAlbums.add(a);}
+                    player.favoriteAlbums.set(manyAlbums);settle(view);
+                    Item albumList=view.findByObjectName("favoriteAlbumsList");List<Item> pool=new ArrayList<>();collectRows(albumList,pool);
+                    Map<Integer,Item> oldRows=new HashMap<>();for(Item row:pool)oldRows.put(((Number)prop(row,"sourceIndex").peek()).intValue(),row);
+                    prop(albumList,"contentY").set(385f);settle(view);List<Item> shifted=new ArrayList<>();collectRows(albumList,shifted);
+                    assertEquals("bounded stable slot count",pool.size(),shifted.size());
+                    int stable=0;for(Item row:shifted){int ix=((Number)prop(row,"sourceIndex").peek()).intValue();if(oldRows.containsKey(ix)){assertSame("overlap keeps cover delegate",oldRows.get(ix),row);stable++;}}
+                    assertTrue("scroll retains overlapping image delegates",stable>=pool.size()-2);
+                    // Horizontal collection pager must follow touch and settle to the song page.
+                    Item pager=view.findByObjectName("collectionSwipePager");assertNotNull(pager);
+                    for(int i=0;i<60;i++){view.tickAnimations(System.nanoTime()+1_000_000_000L);settle(view);}
+                    Map<String,Object> origin=view.root().mapFromItem(pager,0,180);
+                    float py=((Number)origin.get("y")).floatValue();
+                    view.dispatchPointerDown(60,py);
+                    for(int i=1;i<=8;i++){view.dispatchPointerMove(60+i*33,py);view.tickAnimations(System.nanoTime());settle(view);Thread.sleep(18);}
+                    assertTrue("pager follows the finger",((Number)prop(pager,"contentX").peek()).floatValue()<pager.width.peekFloat()-30);
+                    view.dispatchPointerUp(324,py);
+                    for(int i=0;i<90;i++){view.tickAnimations(System.nanoTime()+1_000_000_000L);settle(view);Thread.sleep(2);}
+                    assertFalse("right swipe selects songs",(Boolean)prop(detail,"albumsTab").peek());
+                    player.debugRouteType.set("tab");player.debugRouteId.set("0");player.debugRouteRevision.set(3L);settle(view);
+                    for(int i=0;i<60;i++){view.tickAnimations(System.nanoTime()+1_000_000_000L);settle(view);Thread.sleep(8);}
+                    player.updateProgress.set(41);settle(view);click(view,view.findByObjectName("compactOverflowAction"));
+                    frame(view,player,settings,compositor,"update-menu-390");
+                    assertTrue("progress uses toolbar indicator",view.findByObjectName("updateToolbarProgress").visible.peek());
+                    assertTrue("root overflow contains update state",(Boolean)prop(view.findByObjectName("compactOverflowMenu"),"opened").peek());
+                    assertNotNull(findVisible(view.root(),"menuUpdateProgress"));
+                    player.updateProgress.set(67);settle(view);
+                    assertEquals("open menu progress updates live",0.67,((Number)prop(findVisible(view.root(),"menuUpdateProgress"),"value").peek()).doubleValue(),0.001);
+                    frame(view,player,settings,compositor,"update-menu-live-390");
+                    player.backTick.set(player.backTick.peek()+1);settle(view);
+                    player.openSourceAlbumId.set("qq:album:fixture");player.albumName.set("生活麻辣烫 · 预览");player.albumArtistName.set("示例音乐人");player.albumCoverPath.set(art.toString());player.sourceAlbumTracks.set(songs);player.albumLoading.set(false);
+                    player.pageNavigationTarget.set("album");player.pageNavigationEntityId.set("qq:album:fixture");player.pageNavigationRevision.set(player.pageNavigationRevision.peek()+1);settle(view);
+                    frame(view,player,settings,compositor,"album-detail-390");
+                    assertNotNull(view.findByObjectName("albumFavoriteAction"));
+                    Item albumTracks=view.findByObjectName("albumDetailTracks");prop(albumTracks,"contentY").set(270f);settle(view);
+                    Map<String,Object> heroPosition=view.root().mapFromItem(view.findByObjectName("albumScrollableHero"),0,0);
+                    assertTrue("album header scrolls away",((Number)heroPosition.get("y")).floatValue()<0);
+                    frame(view,player,settings,compositor,"album-detail-scrolled-390");
+
+
                 } finally {q.uninstall();}
             }
         } finally {compositor.dispose();if(view!=null)view.dispose();if(player!=null)player.shutdownAsync().join();AppDirs.setBase(base);AppDirs.setCacheBase(cache);}
     }
+    private static void collectRows(Item node,List<Item> out){if("favoriteAlbumRow".equals(node.objectName.peek()))out.add(node);for(Item child:node.children)collectRows(child,out);}
     private static Item findVisible(Item node,String name){if(name.equals(node.objectName.peek()) && node.visible.peek())return node;for(Item child:node.children){Item found=findVisible(child,name);if(found!=null)return found;}return null;}
     private static void frame(QmlView view,PlayerController player,SettingsCore settings,LyricCompositor c,String name)throws Exception {
         int w=Math.round(view.root().width.peekFloat()),h=Math.round(view.root().height.peekFloat());

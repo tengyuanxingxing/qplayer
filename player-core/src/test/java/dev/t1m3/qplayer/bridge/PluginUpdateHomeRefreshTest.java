@@ -71,7 +71,7 @@ public class PluginUpdateHomeRefreshTest {
             assertEquals("QQ",c.qqGuessSongs.peek().get(0).name);
             assertEquals("NE",awaitPlaylistName(c,"NE"));
             install(c,packageFile("qq-new.qplug","1.0.1","QQ new","qq"),"1.0.1");
-            c.loadHome();awaitUi(c,()->"QQ new".equals(c.qqGuessSongs.peek().get(0).name));
+            c.loadHome();awaitUi(c,()->!c.qqGuessSongs.peek().isEmpty() && "QQ new".equals(c.qqGuessSongs.peek().get(0).name));
             assertEquals("NE",c.sourceRecommendPlaylists.peek().get(0).name);
         } finally {if(controller!=null)lifecycle.close(controller);AppDirs.setBase(oldBase);AppDirs.setCacheBase(oldCache);}
     }

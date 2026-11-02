@@ -176,7 +176,20 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private void pauseGlThread() {
         gpuPaused = true;
         runOnGlThreadAndWait(() -> {
-            if (view != null) invalidateCanvasCaches(view.root());
+            // Complete the previous context's queued reads before releasing
+            // pictures / image-backed Canvas snapshots that those reads use.
+            if (surface != null) surface.drain();
+            if (view != null) {
+                io.github.timer_err.qml4j.render.Renderer renderer = view.renderer();
+                boolean pictures = renderer.pictureCacheEnabled();
+                // setGpuContext only advances the engine's GPU generation; it
+                // does not release recorded pictures. Disabling explicitly
+                // retires them while their old GL context is still current.
+                renderer.setPictureCache(false);
+                invalidateCanvasCaches(view.root());
+                renderer.setGpuContext(null);
+                renderer.setPictureCache(pictures);
+            }
             compositor.invalidateGpuContext();
             if (surface != null) {
                 surface.dispose();
@@ -219,6 +232,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         resourcesReleased = true;
         failed = true;
         if (controller != null) controller.clearRenderWake(renderWake);
+        cleanup("GPU submissions", () -> { if (surface != null) surface.drain(); });
         cleanup("QML scene", () -> {
             if (view != null) {
                 view.dispose();
@@ -985,7 +999,13 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
         @Override
         public void present() {
-            context.flush();
+            // Submission is asynchronous during playback; do not wait for the
+            // GPU each frame. flush alone is not the complete Skija handoff.
+            context.flushAndSubmit(false);
+        }
+
+        void drain() {
+            if (context != null) context.flushAndSubmit(true);
         }
 
         @Override
@@ -1011,6 +1031,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
         @Override
         public void dispose() {
+            drain();
             if (surface != null) { surface.close(); surface = null; }
             if (target != null) { target.close(); target = null; }
             if (context != null) { context.close(); context = null; }

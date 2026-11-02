@@ -8,6 +8,7 @@
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE" />
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" />
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.WAKE_LOCK" />
@@ -102,13 +103,9 @@
         </provider>
 
         <!-- Routes hardware / bluetooth media buttons to the session. -->
-        <receiver android:name="dev.t1m3.qplayer.android.ui.UpdateDownloadReceiver"
-            android:exported="true">
-            <intent-filter>
-                <action android:name="android.intent.action.DOWNLOAD_COMPLETE" />
-                <action android:name="android.intent.action.DOWNLOAD_NOTIFICATION_CLICKED" />
-            </intent-filter>
-        </receiver>
+        <service android:name="dev.t1m3.qplayer.android.ui.UpdateDownloadService"
+            android:exported="false" android:foregroundServiceType="dataSync"
+            android:stopWithTask="false" />
 
         <receiver
             android:name="androidx.media.session.MediaButtonReceiver"

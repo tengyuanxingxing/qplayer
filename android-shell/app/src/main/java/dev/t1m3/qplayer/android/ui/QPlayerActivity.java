@@ -262,6 +262,13 @@ public final class QPlayerActivity extends Activity {
             }
         });
         controller.setInstaller(this::downloadAndInstallUpdate);
+        controller.setUpdateDownloadCanceller(() -> {
+            updateHandler.removeCallbacks(updatePoll);
+            UpdateDownloads.IO.execute(() -> {
+                UpdateDownloads.cancel(getApplicationContext());
+                boundController.setUpdateProgress(-1);
+            });
+        });
         controller.setCoverPicker(this::pickPlaylistCover);
         controller.setPluginPicker(this::pickPluginPackage);
         controller.setFileSavePicker(this::saveAudioFile);
@@ -1281,6 +1288,7 @@ public final class QPlayerActivity extends Activity {
             controller.setUrlOpener(null);
             controller.setAppLinkLauncher(null);
             controller.setInstaller(null);
+            controller.setUpdateDownloadCanceller(null);
             controller.setCoverPicker(null);
             controller.setPluginPicker(null);
             controller.setFileSavePicker(null);

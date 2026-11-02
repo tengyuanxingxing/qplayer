@@ -30,7 +30,10 @@ Rectangle {
         return page.unified || player.isFavoritesPlaylist(player.openSourcePlaylistId)
     }
     property bool albumsTab:false
-    onAlbumsTabChanged:if(page.albumsTab)player.refreshFavoriteAlbums()
+    onAlbumsTabChanged: {
+        if(page.albumsTab)player.refreshFavoriteAlbums()
+        if(!collectionPager.moving)collectionPager.setScrollTarget(page.albumsTab?collectionPager.width:0,0)
+    }
     property string albumsSourceWatch:player.unifiedFavoritesSource
     onAlbumsSourceWatchChanged:if(page.albumsTab)player.refreshFavoriteAlbums()
     property string filterText: ""
@@ -225,16 +228,22 @@ Rectangle {
             onTabSelected:(index)=>page.albumsTab=(index===1)
         }
 
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
+        Flickable {
+            id:collectionPager
+            objectName:"collectionSwipePager"
+            Layout.fillWidth:true;Layout.fillHeight:true
+            clip:true;contentWidth:page.favorites?width*2:width;contentHeight:height
+            flickableDirection:"HorizontalFlick";interactive:page.favorites
+            onMovingChanged:if(!moving && page.favorites){page.albumsTab=contentX>width/2;setScrollTarget(page.albumsTab?width:0,0)}
+            onWidthChanged:setScrollTarget(page.albumsTab?width:0,0)
 
             VirtualSongList {
                 id: tracks
                 objectName:"playlistDetailTracks"
-                visible:!page.albumsTab
+                visible:page.favorites || !page.albumsTab
                 enabled:visible
-                anchors.fill: parent
+                x:0;y:0;width:collectionPager.width;height:collectionPager.height
+                flickableDirection:"VerticalFlick"
                 bottomContentInset: page.bottomContentInset
                 // Playlist metadata and filtering belong to the scroll content.
                 // On a phone this gives the track list the full viewport after the
@@ -333,7 +342,7 @@ Rectangle {
                 // Drop the row delegates when the detail page is closed (see
                 // QueuePage): an invisible detail otherwise keeps the whole
                 // playlist's SongRows alive after you return home.
-                list: page.visible && !page.albumsTab ? page.filteredTracks : null
+                list: page.visible && (page.favorites || !page.albumsTab) ? page.filteredTracks : null
                 // Long-press a track → add to another playlist, and (in your own
                 // playlist) remove it from this one. Not login-gated: adding to the queue
                 // (local list) works signed-out too.
@@ -361,8 +370,8 @@ Rectangle {
             }
 
             FavoriteAlbumsList {
-                anchors.fill:parent
-                visible:page.favorites && page.albumsTab;enabled:visible
+                x:collectionPager.width;y:0;width:collectionPager.width;height:collectionPager.height
+                visible:page.favorites;enabled:visible
                 bottomContentInset:page.bottomContentInset
             }
 

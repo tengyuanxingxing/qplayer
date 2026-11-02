@@ -89,36 +89,11 @@ Rectangle {
                         anchors.rightMargin: 16
                         spacing: 16
 
-                        // Avatar: circular Image over a glyph placeholder.
-                        Item {
+                        AvatarImage {
                             Layout.preferredWidth: 72
                             Layout.preferredHeight: 72
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: width / 2
-                                color: Theme.color.surfaceContainerHigh
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "account_circle"
-                                    font.family: Theme.iconFont.name
-                                    font.pixelSize: 44
-                                    color: Theme.color.onSurfaceVariantColor
-                                }
-                            }
-                            Image {
-                                anchors.fill: parent
-                                source: player.userAvatar
-                                radius: width / 2
-                                fillMode: "PreserveAspectCrop"
-                                visible: player.userAvatar.length > 0
-                                // See CoverImage.qml: decode-time downscale
-                                // (mipmap-quality) instead of a plain bilinear
-                                // draw-time scale, which aliases into moiré,
-                                // scaled by the device pixel ratio so it decodes
-                                // at display resolution instead of 1x.
-                                sourceSize.width: Math.round(72 * player.pixelRatio)
-                                sourceSize.height: Math.round(72 * player.pixelRatio)
-                            }
+                            source: player.userAvatar
+                            iconSize: 44
                         }
 
                         ColumnLayout {
@@ -217,36 +192,14 @@ Rectangle {
 
                         // Kept anchor-based and flat: nested Layouts here stopped
                         // propagating fillWidth and the labels lost their wrapping.
-                        Item {
+                        AvatarImage {
                             id: sourceAvatar
                             anchors.left: parent.left
                             anchors.leftMargin: 16
                             anchors.verticalCenter: parent.verticalCenter
                             width: 44
                             height: 44
-                            Rectangle {
-                                anchors.fill: parent
-                                radius: width / 2
-                                color: Theme.color.surfaceContainerHigh
-                                Text {
-                                    anchors.centerIn: parent
-                                    text: "account_circle"
-                                    font.family: Theme.iconFont.name
-                                    font.pixelSize: 28
-                                    color: Theme.color.onSurfaceVariantColor
-                                }
-                            }
-                            Image {
-                                anchors.fill: parent
-                                source: modelData.avatarUrl
-                                radius: width / 2
-                                fillMode: "PreserveAspectCrop"
-                                visible: modelData.avatarUrl.length > 0
-                                // Same decode-time downscale as the header avatar
-                                // above, so it doesn't alias into moiré.
-                                sourceSize.width: Math.round(44 * player.pixelRatio)
-                                sourceSize.height: Math.round(44 * player.pixelRatio)
-                            }
+                            source: modelData.avatarUrl || ""
                         }
 
                         Text {

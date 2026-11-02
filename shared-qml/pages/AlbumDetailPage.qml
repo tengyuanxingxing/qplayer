@@ -4,134 +4,52 @@ import miuix.Core
 import "."
 import "../components"
 
-// Drill-in album view: header with back + title, then cover/artist/track-count,
-// then the tracklist (VirtualSongList handles arbitrarily long tracklists).
 Rectangle {
-    id: page
-    property real bottomContentInset: 0
+    id:page
+    objectName:"albumDetailPage"
+    property real bottomContentInset:0
     signal back()
     signal home()
-    color: Theme.color.surface
-
-    property bool loadingWatch: player.albumLoading
-    onLoadingWatchChanged: if (player.albumLoading) tracks.contentY = 0
-
-    // Swallow taps on empty areas so they don't reach the page beneath.
-    MouseArea { anchors.fill: parent }
-
+    color:Theme.color.surface
+    property bool loadingWatch:player.albumLoading
+    onLoadingWatchChanged:if(player.albumLoading)tracks.contentY=0
+    MouseArea { anchors.fill:parent }
     ColumnLayout {
-        anchors.fill: parent
-        spacing: 0
-
-        // Custom header: qml4j can't set a sub-property of TopAppBar's
-        // navigationIcon alias (navigationIcon.icon) via grouped binding.
+        anchors.fill:parent;spacing:0
         RowLayout {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 64
-            Layout.leftMargin: 4
-            Layout.rightMargin: 16
-            spacing: 4
-            PageHeaderButtons {
-                Layout.alignment: Qt.AlignVCenter
-                onHome: page.home()
-                onBack: page.back()
-            }
-            Text {
-                Layout.fillWidth: true
-                Layout.alignment: Qt.AlignVCenter
-                text: player.albumName
-                color: Theme.color.onSurfaceColor
-                font.family: Theme.typography.titleLarge.family
-                font.pixelSize: Theme.typography.titleLarge.size
-                verticalAlignment: Text.AlignVCenter
-                elide: Text.ElideRight
-            }
+            Layout.fillWidth:true;Layout.preferredHeight:60;spacing:4
+            PageHeaderButtons { onHome:page.home();onBack:page.back() }
+            Text { Layout.fillWidth:true;text:player.albumName;font.pixelSize:20;color:Theme.color.onSurfaceColor;elide:Text.ElideRight }
+            Item { Layout.preferredWidth:16 }
         }
-
-        // Album info: cover + artist (tap to open their page) + release year/track count.
         Item {
-            Layout.fillWidth: true
-            Layout.preferredHeight: 96
-            visible: !player.albumLoading
-
-            CoverImage {
-                id: cover
-                x: 16; y: 8
-                width: 80; height: 80
-                radius: 10
-                icon: "album"
-                iconSize: 30
-                fadeIn: true
-                source: player.albumCoverPath
-            }
-
-            Text {
-                id: artistLine
-                anchors.left: cover.right
-                anchors.leftMargin: 14
-                anchors.right: parent.right
-                anchors.rightMargin: 16
-                anchors.top: cover.top
-                anchors.topMargin: 6
-                text: player.albumArtistName
-                color: (artistArea.enabled && artistArea.containsMouse)
-                       ? Theme.color.primary : Theme.color.onSurfaceVariantColor
-                fontSize: 14
-                elide: Text.ElideRight
-            }
-            MouseArea {
-                id: artistArea
-                anchors.left: artistLine.left
-                anchors.right: artistLine.right
-                anchors.top: artistLine.top
-                anchors.bottom: artistLine.bottom
-                enabled: player.albumArtistMediaId !== "" || player.albumArtistId !== 0
-                hoverEnabled: enabled
-                cursorShape: Qt.PointingHandCursor
-                onClicked: player.openMediaArtist(player.albumArtistMediaId !== ""
-                                                  ? player.albumArtistMediaId
-                                                  : ("" + player.albumArtistId))
-            }
-
-            Text {
-                anchors.left: artistLine.left
-                anchors.right: artistLine.right
-                anchors.top: artistLine.bottom
-                anchors.topMargin: 8
-                text: {
-                    var songs = tracks.list && tracks.list.length > 0
-                                ? i18n.t("common.songCount", tracks.list.length) : ""
-                    if (player.albumPublishYear === "") return songs
-                    return player.albumPublishYear + (songs !== "" ? " · " + songs : "")
-                }
-                color: Theme.color.onSurfaceVariantColor
-                fontSize: 12
-            }
-        }
-
-        Item {
-            Layout.fillWidth: true
-            Layout.fillHeight: true
-
+            Layout.fillWidth:true;Layout.fillHeight:true
             VirtualSongList {
-                id: tracks
-                anchors.fill: parent
-                bottomContentInset: page.bottomContentInset
-                visible: !player.albumLoading
-                // Drop the row delegates when the detail page is closed (see
-                // QueuePage): an invisible detail otherwise keeps the whole
-                // album's SongRows alive after you return.
-                list: page.visible ? (player.openSourceAlbumId !== ""
-                                      ? player.sourceAlbumTracks : player.albumTracks) : null
-                onActivated: player.playAlbumTrack(tracks.activatedIndex)
+                id:tracks
+                objectName:"albumDetailTracks"
+                anchors.fill:parent
+                bottomContentInset:page.bottomContentInset
+                visible:!player.albumLoading
+                list:page.visible?(player.openSourceAlbumId!==""?player.sourceAlbumTracks:player.albumTracks):null
+                onActivated:player.playAlbumTrack(tracks.activatedIndex)
+                headerHeight:player.albumLoading?0:238
+                header:Component {
+                    Item {
+                        objectName:"albumScrollableHero"
+                        width:tracks.width;height:238
+                        CoverImage { id:cover;x:20;y:10;width:124;height:124;radius:12;icon:"album";fadeIn:false;source:player.albumCoverPath }
+                        Text { x:160;y:15;width:parent.width-180;text:player.albumName;wrapMode:Text.Wrap;maximumLineCount:2;elide:Text.ElideRight;font.pixelSize:20;font.weight:Font.DemiBold;color:Theme.color.onSurfaceColor }
+                        Text { x:160;y:76;width:parent.width-180;text:player.albumArtistName;font.pixelSize:14;color:Theme.color.onSurfaceVariantSummary;elide:Text.ElideRight
+                            MouseArea { anchors.fill:parent;enabled:player.albumArtistMediaId!=="" || player.albumArtistId!==0;onClicked:player.openMediaArtist(player.albumArtistMediaId!==""?player.albumArtistMediaId:(""+player.albumArtistId)) }
+                        }
+                        Text { x:160;y:106;width:parent.width-180;text:player.albumPublishYear;font.pixelSize:12;color:Theme.color.onSurfaceVariantSummary;elide:Text.ElideRight }
+                        Button { objectName:"albumFavoriteAction";x:20;y:154;width:(parent.width-52)/2;text:player.albumFavoriteBusy?"处理中…":(player.albumFavorite?"已收藏":"收藏专辑");icon:player.albumFavorite?"favorite":"favorite_border";enabled:player.albumFavoriteSupported && !player.albumFavoriteBusy;onClicked:player.toggleAlbumFavorite() }
+                        Button { objectName:"albumPlayAllAction";x:(parent.width+12)/2;y:154;width:(parent.width-52)/2;text:"全部播放";icon:"play_arrow";enabled:tracks.list && tracks.list.length>0;onClicked:player.playAlbumTrack(0) }
+                        Text { x:20;y:214;text:"歌曲 · "+(tracks.list?tracks.list.length:0);font.pixelSize:14;font.weight:Font.DemiBold;color:Theme.color.onSurfaceColor }
+                    }
+                }
             }
-
-            LoadingIndicator {
-                objectName: "detailLoadingIndicator"
-                anchors.centerIn: parent
-                visible: player.albumLoading
-                running: player.albumLoading
-            }
+            LoadingIndicator { objectName:"detailLoadingIndicator";anchors.centerIn:parent;visible:player.albumLoading;running:visible }
         }
     }
 }

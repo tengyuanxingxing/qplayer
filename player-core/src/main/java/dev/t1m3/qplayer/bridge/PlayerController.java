@@ -620,7 +620,9 @@ public final class PlayerController {
             new Property<>(Collections.<Song>emptyList());
     /** QQ personal radio is independent of whichever provider supplies the playlist grid. */
     public final Property<List<Song>> qqGuessSongs = new Property<>(Collections.<Song>emptyList());
-    public final Property<String> qqGuessStatus = new Property<>("正在加载 QQ 音乐猜你喜欢…");
+    public final Property<List<Song>> qqDailySongs = new Property<>(Collections.<Song>emptyList());
+    public final Property<String> qqDailyStatus = new Property<>("正在加载 QQ 每日30首…");
+    public final Property<String> qqGuessStatus = new Property<>("正在验证 QQ 账号并加载个性电台…");
     private final AtomicLong qqGuessGeneration = new AtomicLong();
 
     public final Property<List<Playlist>> sourceRecommendPlaylists =
@@ -4291,6 +4293,16 @@ public final class PlayerController {
     }
 
     private volatile Installer installer;
+    private volatile Runnable updateDownloadCanceller;
+
+    public void setUpdateDownloadCanceller(Runnable action) {
+        updateDownloadCanceller = action;
+    }
+
+    public void cancelUpdateDownload() {
+        Runnable action = updateDownloadCanceller;
+        if (action != null) onHost(action);
+    }
 
     public void setInstaller(Installer i) {
         synchronized (QmlRuntimeLock.MONITOR) {
@@ -8464,8 +8476,15 @@ public final class PlayerController {
         if (generation != qqGuessGeneration.get()) return;
         List<Song> songs = home != null ? home.songs : Collections.<Song>emptyList();
         qqGuessSongs.set(Collections.unmodifiableList(new ArrayList<>(songs)));
-        qqGuessStatus.set(error != null ? "QQ 推荐加载失败，点刷新重试"
-                : songs.isEmpty() ? "QQ 暂未返回推荐，请检查 QQ 登录后刷新" : "来自 QQ 音乐猜你喜欢");
+        qqGuessStatus.set(error != null ? "QQ 推荐登录态未验证或请求失败，请登录后刷新"
+                : home != null && !home.recommendationStatus.isEmpty() ? home.recommendationStatus
+                : "QQ 插件未提供可验证的账号推荐，请更新插件");
+        qqDailySongs.set(Collections.unmodifiableList(new ArrayList<>(home != null ? home.dailySongs : Collections.<Song>emptyList())));
+        qqDailyStatus.set(error != null ? "QQ 每日30首加载失败，请登录后刷新" : home != null ? home.dailyStatus : "QQ 每日30首暂不可用");
+    }
+
+    public void playQqDaily(int index) {
+        synchronized (QmlRuntimeLock.MONITOR) { playPluginSongList(qqDailySongs.peek(), index); }
     }
 
     public void playQqGuess(int index) {
@@ -8485,9 +8504,14 @@ public final class PlayerController {
                     .anyMatch(source -> "qq".equals(source.id) && source.capabilities.contains(ProviderCapability.HOME.wireName()));
             if (!hasQq) {
                 qqGuessSongs.set(Collections.<Song>emptyList());
-                qqGuessStatus.set("安装并启用 QQ 音乐插件后可获取猜你喜欢");
+                qqGuessStatus.set("安装并启用 QQ 音乐插件后可获取个性电台");
+                qqDailySongs.set(Collections.<Song>emptyList());
+                qqDailyStatus.set("安装并启用 QQ 音乐插件后可获取每日30首");
             } else {
-                qqGuessStatus.set("正在加载 QQ 音乐猜你喜欢…");
+                qqGuessSongs.set(Collections.<Song>emptyList());
+                qqDailySongs.set(Collections.<Song>emptyList());
+                qqGuessStatus.set("正在验证 QQ 账号并加载个性电台…");
+                qqDailyStatus.set("正在加载 QQ 每日30首…");
                 if (provider == null || !"qq".equals(provider.id))
                     pluginProviders.home("qq", homePlaylistLimit).whenComplete((home, error) ->
                             post(() -> publishQqGuess(home, error, guessGeneration)));
@@ -8827,6 +8851,10 @@ public final class PlayerController {
                 showToast(I18n.tr("toast.id.album"));
                 return;
             }
+            final long albumGeneration = ++albumFavoriteGeneration;
+            albumFavorite.set(false);
+            albumFavoriteBusy.set(false);
+            albumFavoriteSupported.set(false);
             openSourceAlbumId.set(id.toString());
             openAlbumId.set(0L);
             albumPageOpen.set(true);
@@ -8847,7 +8875,7 @@ public final class PlayerController {
                             (album, error) ->
                                     post(
                                             () -> {
-                                                if (!id.toString().equals(openSourceAlbumId.peek()))
+                                                if (albumGeneration != albumFavoriteGeneration || !id.toString().equals(openSourceAlbumId.peek()))
                                                     return;
                                                 albumLoading.set(false);
                                                 if (error != null || album == null) {
@@ -8878,12 +8906,55 @@ public final class PlayerController {
                                                 sourceAlbumTracks.set(
                                                         Collections.unmodifiableList(
                                                                 new ArrayList<>(album.songs)));
+                                                refreshAlbumFavorite(id,albumGeneration);
                                             }));
         }
     }
 
     public void openAlbum(long albumId) {
         openMediaAlbum("netease:album:" + albumId);
+    }
+
+    public final Property<Boolean> albumFavorite = new Property<>(false);
+    public final Property<Boolean> albumFavoriteBusy = new Property<>(false);
+    public final Property<Boolean> albumFavoriteSupported = new Property<>(false);
+    private long albumFavoriteGeneration;
+
+    private boolean canFavoriteAlbum(MediaId id) {
+        return providerLoggedIn(id.provider()) && pluginHasCapability(id.provider(),ProviderCapability.ALBUM_FAVORITE);
+    }
+
+    private void refreshAlbumFavorite(MediaId id, long generation) {
+        if (!canFavoriteAlbum(id)) return;
+        albumFavoriteBusy.set(true);
+        pluginProviders.albumFavorite(id,"status").whenComplete((state,error) -> post(() -> {
+            if (generation != albumFavoriteGeneration || !id.toString().equals(openSourceAlbumId.peek())) return;
+            albumFavoriteBusy.set(false);
+            if (error != null) { showToast("收藏状态加载失败，请重新打开专辑重试"); return; }
+            albumFavorite.set(Boolean.TRUE.equals(state));
+            albumFavoriteSupported.set(canFavoriteAlbum(id));
+        }));
+    }
+
+    public void toggleAlbumFavorite() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (!albumFavoriteSupported.peek() || albumFavoriteBusy.peek()) return;
+            final MediaId id = MediaId.parse(openSourceAlbumId.peek()).requireKind(dev.t1m3.qplayer.media.MediaKind.ALBUM);
+            if (!canFavoriteAlbum(id)) { albumFavoriteSupported.set(false); return; }
+            final boolean wanted = !albumFavorite.peek();
+            final long generation = albumFavoriteGeneration;
+            albumFavoriteBusy.set(true);
+            pluginProviders.albumFavorite(id,wanted?"add":"remove").whenComplete((state,error) -> post(() -> {
+                if (generation != albumFavoriteGeneration || !id.toString().equals(openSourceAlbumId.peek())) return;
+                albumFavoriteBusy.set(false);
+                if (error != null || state == null || state.booleanValue() != wanted) {
+                    showToast("专辑收藏未成功，请检查登录状态后重试"); return;
+                }
+                albumFavorite.set(wanted);
+                showToast(wanted?"已收藏到我的收藏 · 专辑":"已取消收藏专辑");
+                refreshFavoriteAlbums();
+            }));
+        }
     }
 
     /** Play a song from the open album's tracklist. */
@@ -10615,6 +10686,7 @@ public final class PlayerController {
                 // The signed-in source may not be the primary one, and only this
                 // list can show it.
                 refreshSourceAccounts();
+                if (homeRequested) loadHome();
                 showToast(I18n.tr("toast.login.success"));
                 break;
             case "expired":
@@ -10766,6 +10838,21 @@ public final class PlayerController {
     /** 我的 and the liked hearts keep the other sources' data after one source
      *  signs out; only the leaving source's own slice goes away. */
     private void dropSourceUserData(String providerId) {
+        if (openSourceAlbumId.peek().startsWith(providerId + ":")) {
+            ++albumFavoriteGeneration;
+            albumFavorite.set(false);
+            albumFavoriteBusy.set(false);
+            albumFavoriteSupported.set(false);
+            albumLoading.set(false);
+        }
+        if ("qq".equals(providerId)) {
+            qqGuessGeneration.incrementAndGet();
+            if (providerId.equals(pluginRegistry.primaryProvider())) homeGeneration.incrementAndGet();
+            qqGuessSongs.set(Collections.<Song>emptyList());
+            qqDailySongs.set(Collections.<Song>emptyList());
+            qqGuessStatus.set("请登录 QQ 账号后刷新个性电台");
+            qqDailyStatus.set("请登录 QQ 账号后刷新每日30首");
+        }
         favoriteAlbumsGeneration.incrementAndGet();
         List<Album> remainingAlbums=new ArrayList<>();
         for(Album album:favoriteAlbums.peek())if(!album.id.startsWith(providerId+":"))remainingAlbums.add(album);

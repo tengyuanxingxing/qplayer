@@ -88,11 +88,13 @@ function cookieValue(cookies, keys) {
 }
 
 function musicKey(cookies) {
-  return cookieValue(cookies, ["musickey", "qm_keyst", "qqmusic_key"]);
+  return cookieValue(cookies, ["qm_keyst", "qqmusic_key", "musickey", "music_key"]);
 }
 
 function musicUin(cookies) {
-  var uin = cookieValue(cookies, ["musicid", "uin", "wxuin"]);
+  var uin = Number(cookies.login_type) === 2
+      ? cookieValue(cookies, ["wxuin", "musicid", "uin", "p_uin"])
+      : cookieValue(cookies, ["musicid", "uin", "qqmusic_uin", "wxuin", "p_uin"]);
   if (!uin) return "0";
   var digits = String(uin).replace(/^[oO]0*/, "");
   return digits ? digits : String(uin);
@@ -634,46 +636,75 @@ function homePlaylists(args) {
   });
 }
 
-/** QQ 客户端的猜你喜欢 / 个性电台；沿用 musicu 的 Cookie、authst 与续期。 */
-function guessSongs(limit) {
-  var rows = [], seen = {}, attempts = 0, stalled = 0;
-  function next() { return musicu({guess: {
-    module: "music.radioProxy.MbTrackRadioSvr", method: "get_radio_track",
-    // The account radio is a stateful Web feed, not radio station 99. Passing
-    // a fixed station/from=0 kept replaying its five-track preview; song_ids
-    // is not a supported pagination cursor on that request.
-    param: {}
-  }}, {ct:19, cv:0}).then(function (body) {
-    var node = body.guess || {};
-    if (Number(node.code || 0) !== 0) return rows;
-    var data = node.data || {}, tracks = [];
-    [data.track, data.songList, data.vec_song, data.tracks].some(function (list) {
-      if (Array.isArray(list) && list.length) { tracks = list; return true; }
-      return false;
-    });
-    var before = rows.length;
-    songsOf(tracks, function (row) {
-      return row.track_info || row.songInfo || row.song_info || row;
-    }).forEach(function (song) {
-      if (!seen[song.id]) { seen[song.id] = true; rows.push(song); }
-    });
-    stalled = rows.length > before ? 0 : stalled + 1;
-    // A duplicate batch can be followed by a new batch. Retry once, bounded,
-    // without duplicating tracks or substituting unrelated search results.
-    if (rows.length < limit && tracks.length && stalled < 2 && ++attempts < 12) return next();
-    return rows.slice(0, limit);
-  }).catch(function (error) { if (rows.length) return rows.slice(0, limit); throw error; }); }
-  return next();
+/** Verify a session-bound endpoint before accepting radio's anonymous-success fallback. */
+function requirePersonalAccount() {
+  return loadCookies().then(function(cookies) {
+    var uin=musicUin(cookies);
+    if (!musicKey(cookies) || uin==="0") throw new Error("请先登录 QQ 音乐后加载账号推荐");
+    return musicu({identity:{module:"music.UserInfo.userInfoServer",method:"GetLoginUserInfo",param:{}}}, {ct:19,cv:0})
+      .then(function(body) {
+        var node=body.identity || {}, info=(node.data || {}).info;
+        if (Number(body.code || 0)!==0 || Number(node.code)!==0 || !info)
+          throw new Error("QQ 推荐登录态未验证，请重新登录 QQ 音乐");
+        var actual=String(info.musicid || info.uin || info.str_musicid || "").replace(/^[oO]0*/, "");
+        if (!/^[1-9][0-9]*$/.test(actual)) throw new Error("QQ 未返回可核验的账号 ID，请重新登录");
+        if (actual!==uin) throw new Error("QQ 推荐账号不一致，请重新登录");
+        return uin;
+      });
+  });
 }
 
+/** QQ's continuous radio feed, not the native app's full home recommendation shelf. */
+function guessSongs(limit) {
+  var rows=[],seen={},attempts=0,stalled=0;
+  function next() { return musicu({guess:{module:"music.radioProxy.MbTrackRadioSvr",method:"get_radio_track",
+    param:{id:99,num:5,from:0,scene:0,song_ids:[]}}},{ct:19,cv:0}).then(function(body) {
+    var node=body.guess || {};
+    if (Number(body.code || 0)!==0 || Number(node.code || 0)!==0) throw new Error("QQ 个性电台暂不可用，请刷新或重新登录");
+    var data=node.data || {},tracks=[];
+    [data.track,data.songList,data.vec_song,data.tracks].some(function(list){if(Array.isArray(list)&&list.length){tracks=list;return true;}return false;});
+    var before=rows.length;
+    songsOf(tracks,function(row){return row.track_info || row.songInfo || row.song_info || row;}).forEach(function(song){if(!seen[song.id]){seen[song.id]=true;rows.push(song);}});
+    stalled=rows.length>before?0:stalled+1;
+    if(rows.length<limit && tracks.length && stalled<2 && ++attempts<12)return next();
+    return rows.slice(0,limit);
+  });}
+  return next();
+}
+function shanghaiDay(ms) { return new Date(ms+8*3600000).toISOString().slice(0,10); }
+function dailySongs() {
+  var day=shanghaiDay(Date.now());
+  return musicu({daily:{module:"music.recommend.RecommendFeed",method:"get_recommend_feed",
+    param:{direction:0,page:1,v_cache:[],v_uniq:[],s_num:0}}}).then(function(body){
+    var node=body.daily || {},data=node.data || {},cards=[];
+    if(Number(body.code || 0)!==0 || Number(node.code || 0)!==0 || Number(data.retcode || 0)!==0)throw new Error("QQ 每日30首加载失败");
+    // Only the account-owned daily card. Never substitute a public fixed playlist.
+    (data.v_shelf || []).forEach(function(shelf){(shelf.v_niche || []).forEach(function(niche){(niche.v_card || []).forEach(function(card){if(Number(card.subtype)===510)cards.push(card);});});});
+    if(cards.length!==1)throw new Error("QQ 未返回账号每日30首卡片");
+    var card=cards[0],id=String(card.id || ""),time=Number(card.time || 0)*1000;
+    if(!/^[1-9][0-9]*$/.test(id) || !Number.isSafeInteger(Number(id)) || !time || shanghaiDay(time)!==day)throw new Error("QQ 每日30首卡片已过期，请刷新");
+    function dailyPage(tid,begin,num){
+      return musicu({req:{module:"music.srfDissInfo.DissInfo",method:"CgiGetDiss",
+        param:{disstid:Number(tid),dirid:0,tag:true,userinfo:true,orderlist:true,song_begin:begin,song_num:num}}})
+        .then(function(result){
+          var req=result.req || {};
+          if(Number(result.code || 0)!==0 || Number(req.code || 0)!==0 || !req.data)throw new Error("QQ 每日30首歌单加载失败");
+          return req.data;
+        });
+    }
+    return dailyPage(id,0,DISS_PAGE).then(function(first){return allDissSongs(id,first,dailyPage);}).then(function(rows){
+      if(shanghaiDay(Date.now())!==day)throw new Error("日期已变化，请刷新每日30首");
+      return songsOf(rows);
+    });
+  });
+}
 function home(args) {
-  var limit = Math.min(30, Math.max(1, Number(args.limit || 12)));
-  // 歌曲和歌单分别加载：歌单接口异常不能吞掉已成功返回的电台歌曲。
-  return Promise.all([
-    // Playlist-card settings must not shrink the three-row recommendation carousel.
-    guessSongs(30).catch(function () { return []; }),
-    homePlaylists(args).catch(function () { return {playlists:[]}; })
-  ]).then(function (both) { return {songs:both[0], playlists:both[1].playlists || []}; });
+  return requirePersonalAccount().then(function(){
+    return Promise.all([
+      guessSongs(30).then(function(songs){return {songs:songs,status:songs.length?"QQ 个性电台 · 已验证账号":"QQ 个性电台暂无歌曲"};},function(error){return {songs:[],status:String(error.message || "QQ 个性电台加载失败")};}),
+      dailySongs().then(function(songs){return {songs:songs,status:"QQ 每日30首 · 今日账号歌单"};},function(error){return {songs:[],status:String(error.message || "QQ 每日30首加载失败")};})
+    ]).then(function(results){return {songs:results[0].songs,recommendationStatus:results[0].status,dailySongs:results[1].songs,dailyStatus:results[1].status,playlists:[]};});
+  });
 }
 
 /** 一页歌单详情。第二页起只要歌曲,省掉重复的 dirinfo/标签。 */
@@ -721,13 +752,14 @@ function favTids() {
   });
 }
 
-function allDissSongs(tid, first) {
+function allDissSongs(tid, first, loader) {
+  loader=loader || dissPage;
   var rows=(first.songlist || []).slice();
   var total=Number((first.dirinfo || {}).songnum || first.total_song_num || rows.length || 0);
   if(total>MAX_PLAYLIST_SONGS) throw new Error("收藏超过当前可同步上限，请反馈以扩展支持");
   function next() {
     if(rows.length>=total) return Promise.resolve(rows);
-    return dissPage(tid,rows.length,Math.min(DISS_PAGE,total-rows.length)).then(function(page){
+    return loader(tid,rows.length,Math.min(DISS_PAGE,total-rows.length)).then(function(page){
       var more=page.songlist || [];
       if(!more.length) throw new Error("QQ 歌单分页未返回完整内容，请刷新重试");
       rows=rows.concat(more);return next();
@@ -1777,6 +1809,51 @@ function favoriteAlbums(args) {
   });
 }
 
+// Native account collection, checked page by page rather than inferred from liked songs.
+function albumFavoriteStatus(id) {
+  var cursors={},pages=0;
+  function next(cursor) {
+    if(cursors[cursor] || ++pages>100)throw new Error("QQ 收藏专辑分页异常，请刷新重试");
+    cursors[cursor]=true;
+    return favoriteAlbums({cursor:cursor}).then(function(page){
+      if(page.items.some(function(album){return album.id===id;}))return true;
+      return page.nextCursor?next(page.nextCursor):false;
+    });
+  }
+  return next("");
+}
+function albumFavorite(args) {
+  var id=String(args.id || ""),op=String(args.operation || "status");
+  if(!/^[a-zA-Z0-9]+$/.test(id))throw new Error("缺少有效专辑 ID");
+  if(["status","add","remove"].indexOf(op)<0)throw new Error("未知收藏专辑操作");
+  return requirePersonalAccount().then(function(uin){
+    var identity=musicu({albumId:{module:"music.musichallAlbum.AlbumInfoServer",method:"GetAlbumDetail",
+        param:/^[1-9][0-9]*$/.test(id)?{albumId:Number(id)}:{albumMId:id}}})
+        .then(function(body){
+          var node=body.albumId || {},basic=(node.data || {}).basicInfo || {};
+          if(Number(body.code || 0)!==0 || Number(node.code)!==0)throw new Error("QQ 专辑信息加载失败");
+          return {numericId:Number(basic.albumID || basic.albumId || basic.id || 0),
+            mid:String(basic.albumMid || basic.albumMId || (/^[0-9]+$/.test(id)?"":id))};
+        });
+    return identity.then(function(album){
+      if(!album.mid)throw new Error("QQ 未返回可识别的专辑 MID");
+      if(op==="status")return albumFavoriteStatus(album.mid).then(function(value){return {favorited:value};});
+      if(!Number.isSafeInteger(album.numericId) || album.numericId<=0)throw new Error("QQ 未返回可收藏的专辑 ID");
+      return loadCookies().then(function(cookies){
+        if(musicUin(cookies)!==uin)throw new Error("账号已变化，请重新操作");
+        return musicu({writeAlbum:{module:"music.musicasset.AlbumFavWrite",method:op==="add"?"FavAlbum":"CancelFavAlbum",param:{v_albumId:[album.numericId]}}},WRITE_COMM);
+      }).then(function(body){
+        var node=body.writeAlbum || {},data=node.data || {};
+        if(Number(body.code || 0)!==0 || Number(node.code)!==0 || Number(data.retcode || data.retCode || 0)!==0)throw new Error("QQ 未确认收藏专辑操作，请重试");
+        return albumFavoriteStatus(album.mid);
+      }).then(function(value){
+        if(value!==(op==="add"))throw new Error("QQ 尚未确认收藏状态，请刷新后重试");
+        return {favorited:value};
+      });
+    });
+  });
+}
+
 function comments(args) {
   var page = Math.max(0, Number(args.cursor || 0));
   var hot = args.sort === "hot";
@@ -1801,6 +1878,7 @@ module.exports = {
   handlers: {
     comments: comments,
     favoriteAlbums: favoriteAlbums,
+    albumFavorite: albumFavorite,
     searchSongs: searchSongs,
     searchArtists: searchArtists,
     songDetails: songDetails,
