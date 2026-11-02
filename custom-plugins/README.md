@@ -7,11 +7,16 @@
 网络、登录和平台协议由插件持有；播放器仅校验、展示标准评论数据。
 
 这些是本地修改版，非上游官方发布；保持 `netease` / `qq` / `soda` 插件 ID，
-以便识别收藏及优先播放源，并保留同 ID 插件凭据。配套 QPlayer 1.9.10-custom 使用。
+以便识别收藏及优先播放源，并保留同 ID 插件凭据。配套 QPlayer 1.9.11-custom 使用。
 
-运行 `python scripts/package_custom_plugins.py` 生成 `.qplug`。
-包有逐文件哈希清单，未使用上游发布者签名；在测试版的音源管理里导入本地文件，
-按应用提示确认后启用；更新时直接导入覆盖同 ID 插件。请使用随本次修改交付的插件，否则旧插件缺少新增接口。
+在“设置 → 插件”刷新列表，在已安装插件的“设置”里选择“更新”；未安装的插件从“可安装”入口进入。
+三个仓库分别为 `tengyuanxingxing/qplayer-netease-plugin`、`tengyuanxingxing/qplayer-qqmusic-plugin`、`tengyuanxingxing/qplayer-soda-plugin`。
+所有在线包使用本定制分支独立的 P-256 发布签名，宿主内固定对应公钥；未使用上游作者的签名。
+版本为网易云 0.5.8.3、QQ 0.7.3.3、汽水 0.1.2。
+
+`python scripts/package_custom_plugins.py --signing-key <外部PEM路径>` 可生成签名 `.qplug`，需要 OpenSSL；可用 `--openssl` 指定程序。
+省略签名参数时仅生成供手动导入的未签名包，在线目录不会接受未签名包。私钥存放在仓库外，不能提交到 GitHub。
+包仍包含逐文件哈希清单与原项目许可证；应用内安装需要用户确认权限。
 
 最新评论支持翻页；热评展示平台提供的热门列表。平台登录失效或接口受限时，
 应用会显示错误并允许重试。此扩展只读取评论，不发送评论或点赞。

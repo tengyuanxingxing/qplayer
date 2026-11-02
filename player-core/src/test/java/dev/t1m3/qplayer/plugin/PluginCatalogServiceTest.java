@@ -64,6 +64,22 @@ public class PluginCatalogServiceTest {
         }
     }
 
+    @Test public void bundledCustomSourcesKeepProviderIdsAndPinTheirOwnPublisher() throws Exception {
+        java.util.Map<String,String> repositories = new java.util.HashMap<>();
+        repositories.put("netease", "tengyuanxingxing/qplayer-netease-plugin");
+        repositories.put("qq", "tengyuanxingxing/qplayer-qqmusic-plugin");
+        repositories.put("soda", "tengyuanxingxing/qplayer-soda-plugin");
+        int found = 0;
+        for (PluginCatalogService.Source source : PluginCatalogService.loadBundledSources()) {
+            if (!repositories.containsKey(source.id)) continue;
+            assertEquals(repositories.get(source.id), source.repo);
+            org.junit.Assert.assertTrue(source.name.contains("定制"));
+            org.junit.Assert.assertNotEquals("never trust an upstream key for our modified package", PUBLISHER_KEY, source.publisherKey);
+            found++;
+        }
+        assertEquals(3, found);
+    }
+
     @Test
     public void cancellationWaitsForInjectedDownloaderExitAndDoesNotRetry() throws Exception {
         java.util.concurrent.CountDownLatch entered = new java.util.concurrent.CountDownLatch(1);

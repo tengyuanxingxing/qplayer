@@ -5,7 +5,7 @@
 <h1 align="center">QPlayer</h1>
 
 > 此仓库是 [TIMER-err/qplayer](https://github.com/TIMER-err/qplayer) 的定制测试版，保留原项目署名与许可证。
-> 安卓手机请前往 **[定制版下载页面](https://github.com/tengyuanxingxing/qplayer/releases/tag/v1.9.10-custom)** 下载 APK，并导入同页的 QQ、网易云、汽水插件。
+> 安卓手机请前往 **[定制版下载页面](https://github.com/tengyuanxingxing/qplayer/releases/tag/v1.9.11-custom)** 下载 APK；覆盖安装后，可在“设置 → 插件”中直接安装或更新 QQ、网易云、汽水定制插件。
 > 已安装上次定制测试版时直接覆盖安装，不要先卸载；与上游正式版使用不同的应用 ID 和签名。
 > 改动、安装与验证说明见 [定制构建说明](docs/custom-build.md)。
 

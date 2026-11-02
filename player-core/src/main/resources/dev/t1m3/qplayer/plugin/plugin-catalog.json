@@ -1,17 +1,17 @@
 [
   {
     "id": "netease",
-    "name": "网易云音乐",
-    "description": "由独立项目维护的网易云音乐音源插件，提供搜索、播放、歌词、登录、心动推荐与一起听。",
-    "repo": "TIMER-err/qplayer-netease-plugin",
-    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb/6w4W2oyOmqybld26Cnv17mXEA6x1Xkw4zCrd+hfAnmcEJjBTKtC9jO0Q4DVDOzXsmehlW+PJRINAZ99up6aQ=="
+    "name": "网易云音乐（定制版）",
+    "description": "定制版网易云音源，包含应用内评论、歌手专辑分类与分页，使用独立发布签名。",
+    "repo": "tengyuanxingxing/qplayer-netease-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM6OV1qocPEv9y68aeFzJQuoJ0sEShM3TK0TtsNc9cwch696qpq2SVk579xJ6sDZsISjUGNpwnpiEPbQ+CnxyZA=="
   },
   {
     "id": "qq",
-    "name": "QQ 音乐",
-    "description": "由独立项目维护的 QQ 音乐音源插件，提供搜索、播放、歌词与 Cookie 登录。",
-    "repo": "TIMER-err/qplayer-qqmusic-plugin",
-    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAED7z1yYQ9a5UVpOPUict1ShkKH26NnbEMMAHsxy5zJEPeDd3J2etP1PRKXylO2KWWZgib2KB5/yZ0Xgmj+36TBg=="
+    "name": "QQ音乐（定制版）",
+    "description": "定制版 QQ 音源，包含评论、歌手搜索回退及专辑分类与分页，使用独立发布签名。",
+    "repo": "tengyuanxingxing/qplayer-qqmusic-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM6OV1qocPEv9y68aeFzJQuoJ0sEShM3TK0TtsNc9cwch696qpq2SVk579xJ6sDZsISjUGNpwnpiEPbQ+CnxyZA=="
   },
   {
     "id": "kuwo",
@@ -36,10 +36,10 @@
   },
   {
     "id": "soda",
-    "name": "汽水音乐",
-    "description": "由独立项目维护的汽水音乐音源插件，提供搜索、播放、歌词、扫码登录与用户歌单。",
-    "repo": "MiaM1ku/qplayer-soda-plugin",
-    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEb20opVRUPIiFEeYdDli4uVbL1ry/+VVg5zHVC9/tN0rGcmcssS/Ko3mHjzairTmZZtIuWngooAvqOtOguaK/mg=="
+    "name": "汽水音乐（定制版）",
+    "description": "定制版汽水音源，修复二维码授权跳转、状态识别和设备标识保持，使用独立发布签名。",
+    "repo": "tengyuanxingxing/qplayer-soda-plugin",
+    "publisherKey": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEM6OV1qocPEv9y68aeFzJQuoJ0sEShM3TK0TtsNc9cwch696qpq2SVk579xJ6sDZsISjUGNpwnpiEPbQ+CnxyZA=="
   },
   {
     "id": "unlock",

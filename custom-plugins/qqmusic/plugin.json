@@ -1,12 +1,12 @@
 {
   "schemaVersion": 1,
   "id": "qq",
-  "name": "QQ音乐（评论与歌手扩展）",
-  "version": "0.7.3.2",
+  "name": "QQ音乐（定制版）",
+  "version": "0.7.3.3",
   "apiVersion": "1.0",
-  "minHostVersion": "1.9.10-custom",
+  "minHostVersion": "1.9.11-custom",
   "entry": "src/main.js",
-  "publisher": "Local Custom Build",
+  "publisher": "tengyuanxingxing Custom",
   "capabilities": [
     "searchSongs",
     "songDetails",
