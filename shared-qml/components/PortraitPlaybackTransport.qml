@@ -16,14 +16,6 @@ Item {
     anchors.leftMargin: 28
     anchors.rightMargin: 28
     height: 160
-    IconButton {
-        objectName: "songCommentsButton"
-        x: 0; y: -52; width: 48; height: 48; iconSize: 28
-        icon: "chat_bubble_outline"; contentColor: "#BBFFFFFF"
-        onClicked: player.openCurrentComments()
-    }
-    Text { x: 52; y: -36; text: "评论"; color: "#BBFFFFFF"; font.pixelSize: 14 }
-
     // progress (optional wave) + seek. The wavy phase is an infinite animation gated
     // on the bar's OWN `visible` (control.visible) — own visibility is not the
     // ancestor-effective one, so when the lyric page is closed (this whole

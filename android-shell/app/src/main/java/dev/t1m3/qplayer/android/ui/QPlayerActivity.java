@@ -303,7 +303,7 @@ public final class QPlayerActivity extends Activity {
         settings.registerAction("clearCache", boundController::clearDiskCache);
         settings.registerAction("checkUpdate", boundController::checkForUpdateManual);
         settings.registerAction("openRepo",
-                () -> boundController.openExternalUrl("https://github.com/TIMER-err/qplayer"));
+                () -> boundController.openExternalUrl("https://github.com/tengyuanxingxing/qplayer"));
         settings.registerInfo("version", () -> "v" + boundController.appVersion.peek());
         settings.registerInfo("cacheUsage", () -> boundController.cacheSizeMB.peek() + " MB");
         OverlayLyricWindow.bindSettings(getApplicationContext(), settings);
@@ -514,13 +514,37 @@ public final class QPlayerActivity extends Activity {
                     }
                 }
             }
-            return out.length() > 0;
+            return out.length() > 0 && isCompatibleUpdateApk(out);
         } catch (Throwable e) {
             dev.t1m3.qplayer.util.Logger.warn("update download failed {}: {}", url, e.toString());
             return false;
         } finally {
             if (conn != null) conn.disconnect();
         }
+    }
+
+    private boolean isCompatibleUpdateApk(java.io.File archive) {
+        try {
+            android.content.pm.PackageManager pm=getPackageManager();
+            int flags=Build.VERSION.SDK_INT>=28 ? android.content.pm.PackageManager.GET_SIGNING_CERTIFICATES
+                    : android.content.pm.PackageManager.GET_SIGNATURES;
+            android.content.pm.PackageInfo current=pm.getPackageInfo(getPackageName(),flags);
+            android.content.pm.PackageInfo candidate=pm.getPackageArchiveInfo(archive.getAbsolutePath(),flags);
+            if(candidate==null) return false;
+            long before=Build.VERSION.SDK_INT>=28?current.getLongVersionCode():current.versionCode;
+            long after=Build.VERSION.SDK_INT>=28?candidate.getLongVersionCode():candidate.versionCode;
+            return UpdatePackagePolicy.compatible(current.packageName,before,apkSigners(current),
+                    candidate.packageName,after,apkSigners(candidate));
+        } catch(Exception ignored) {return false;}
+    }
+
+    private static byte[][] apkSigners(android.content.pm.PackageInfo info) {
+        android.content.pm.Signature[] certs=Build.VERSION.SDK_INT>=28 && info.signingInfo!=null
+                ? info.signingInfo.getApkContentsSigners() : info.signatures;
+        if(certs==null) return new byte[0][];
+        byte[][] encoded=new byte[certs.length][];
+        for(int i=0;i<certs.length;i++) encoded[i]=certs[i].toByteArray();
+        return encoded;
     }
 
     /** A downloaded APK awaiting the "install unknown apps" grant; onResume retries it

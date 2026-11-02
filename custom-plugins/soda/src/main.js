@@ -790,7 +790,7 @@ function validateSodaSms(code) {
       if (!ticket && msg && msg !== "success" && msg !== "ok") {
         return { methodId: "cookie", status: "failed", message: "验证码错误: " + body.message };
       }
-      var form = "need_logo=false&need_short_url=false&is_frontier=true&token="
+      var form = "need_logo=false&need_short_url=false&is_frontier=false&token="
         + encodeURIComponent(state.token || "") + "&is_new_login=1&next="
         + encodeURIComponent("https://api.qishui.com");
       var verify = state.verify || {};
@@ -914,6 +914,70 @@ function followSodaLoginRedirect(url, cookies, depth) {
   });
 }
 
+// HTTP polling must disable frontier/WebSocket-only confirmation. Persist the
+// challenge's cookies, device and throttle together across plugin invocations.
+function pollSodaChallenge(token) {
+  if (!token) throw new Error("缺少登录挑战 ID");
+  return call("crypto.digest", {algorithm:"MD5",data:token,dataEncoding:"utf8",outputEncoding:"hex"}).then(function(hex) {
+    var key="qr"+hex;
+    return call("storage.get",{key:key}).then(function(stored) {
+      var state={};
+      try {state=JSON.parse(stored || "{}");} catch (_) {}
+      if(state.deviceId) passportDeviceId=String(state.deviceId);
+      var pending=state.cookies || {};
+      function save() {state.cookies=pending;return call("storage.put",{key:key,value:JSON.stringify(state)});}
+      function result(message) {return {id:token,methodId:"qr",status:state.phase || "waiting",message:message || ""};}
+      if(Date.now() < Number(state.nextPollAt || 0)) return result(state.message);
+      if(!hasSession(pending) && state.expiresAtMs && Date.now()>=state.expiresAtMs)
+        return {id:token,methodId:"qr",status:"expired"};
+      state.nextPollAt=Date.now()+2500;
+      return save().then(function() {
+        if(hasSession(pending)) return completeSodaLogin(token,pending,"qr");
+        var form="need_logo=false&need_short_url=false&is_frontier=false&token="+encodeURIComponent(token)
+          +"&is_new_login=1&next="+encodeURIComponent("https://api.qishui.com");
+        return call("crypto.digest",{algorithm:"MD5",data:form,dataEncoding:"utf8",outputEncoding:"hex"}).then(function(stub) {
+          return call("http.request",{
+            url:"https://api.qishui.com/passport/web/check_qrconnect/?"+passportQuery(),method:"POST",
+            headers:{"User-Agent":UA_PASSPORT,"Content-Type":"application/x-www-form-urlencoded",
+              "Accept":"application/json","x-ss-stub":String(stub).toUpperCase(),"Cookie":cookieHeader(pending)},
+            body:form,timeoutMs:20000
+          });
+        }).then(function(response) {
+          pending=mergeCookies(pending,response.setCookies);
+          var body={};try {body=JSON.parse(response.body || "{}");} catch (_) {}
+          var data=body.data || {},error=num(data.error_code || body.error_code);
+          if(Number(response.status)>=400) throw new Error("HTTP");
+          if(error===7) {
+            state.nextPollAt=Date.now()+5000;
+            state.message="汽水暂时限制登录请求，5 秒后重试；持续失败可切换 Cookie 登录";
+            return save().then(function(){return result(state.message);});
+          }
+          if(error===2046 || String(data.account_flow || "").toLowerCase()==="verify")
+            return handleSodaMfa(token,pending,response.body,body);
+          if(error) {
+            state.message="汽水登录暂未完成（错误码 "+error+"），请重试或改用 Cookie";
+            return save().then(function(){return result(state.message);});
+          }
+          return followSodaLoginRedirect(findJsonString(body,"redirect_url"),pending,0).then(function(completed) {
+            pending=completed;
+            if(hasSession(pending)) return save().then(function(){return completeSodaLogin(token,pending,"qr");});
+            var phase=String(data.status || "").toLowerCase();
+            if(phase==="expired" || phase==="refused" || phase==="4") return {id:token,methodId:"qr",status:"expired"};
+            // Numeric passport states differ by API version. A redirect/session,
+            // rather than a guessed numeric status, is the proof of authorization.
+            if(phase==="scanned" || phase==="confirmed" || phase==="1" || phase==="2" || phase==="3") state.phase="scanned";
+            state.message=state.phase==="scanned"?"已扫码，正在等待汽水确认与登录凭据":"等待扫码或确认授权";
+            return save().then(function(){return result(state.message);});
+          });
+        },function() {
+          state.nextPollAt=Date.now()+5000;state.message="网络暂未返回登录结果，5 秒后重试";
+          return save().then(function(){return result(state.message);});
+        });
+      });
+    });
+  });
+}
+
 function login(args) {
   switch (args && args.operation) {
     case "methods":
@@ -930,7 +994,7 @@ function login(args) {
       return call("http.request", {
         url: "https://api.qishui.com/passport/web/get_qrcode/?" + passportQuery()
           + "&next=" + encodeURIComponent("https://api.qishui.com")
-          + "&need_logo=false&need_short_url=false&is_frontier=true",
+          + "&need_logo=false&need_short_url=false&is_frontier=false",
         method: "GET",
         headers: { "User-Agent": UA_PASSPORT, "Accept": "application/json, text/javascript" },
         timeoutMs: 15000
@@ -939,74 +1003,23 @@ function login(args) {
         var data = body.data || {};
         var token = str(data.token);
         if (!token) throw new Error(body.message || "未能获取登录二维码");
+        var qrContent = first(data.qrcode_index_url, data.web_url);
+        if (!qrContent) throw new Error("汽水没有返回有效扫码地址，请重试");
+        var expiresAtMs = Date.now() + Math.min(180, num(data.expire_time) > 0 ? num(data.expire_time) : 180) * 1000;
         var cookies = mergeCookies({}, response.setCookies);
         return call("crypto.digest", { algorithm: "MD5", data: token, dataEncoding: "utf8", outputEncoding: "hex" }).then(function (hex) {
-          return call("storage.put", { key: "qr" + hex, value: JSON.stringify({cookies: cookies, deviceId: passportDeviceId}) }).then(function () {
+          return call("storage.put", { key: "qr" + hex, value: JSON.stringify({cookies: cookies, deviceId: passportDeviceId, expiresAtMs: expiresAtMs, nextPollAt: 0, phase: "waiting"}) }).then(function () {
             return {
               id: token, methodId: "qr", status: "waiting",
-              qrContent: first(data.qrcode_index_url, data.web_url,
-                "https://bff-pc.qishui.com/light/invoke/scan_login?token=" + encodeURIComponent(token) + "&os=Windows"),
-              expiresAtMs: Date.now() + 5 * 60 * 1000
+              // Do not rewrite the server's URL: the official App can acknowledge a
+              // fabricated deep link without completing this passport challenge.
+              qrContent: qrContent,
+              expiresAtMs: expiresAtMs
             };
           });
         });
       });
-    case "poll": {
-      var token = str(args.challengeId);
-      if (!token) throw new Error("缺少登录挑战 ID");
-      return call("crypto.digest", { algorithm: "MD5", data: token, dataEncoding: "utf8", outputEncoding: "hex" }).then(function (hex) {
-      return call("storage.get", { key: "qr" + hex }).then(function (stored) {
-        var pending = {};
-        try {
-          var state = stored ? JSON.parse(stored) : {};
-          pending = state.cookies || state;
-          if (state.deviceId) passportDeviceId = String(state.deviceId);
-        } catch (_) {}
-        if (hasSession(pending)) return completeSodaLogin(token, pending, "qr");
-        var form = "need_logo=false&need_short_url=false&is_frontier=true&token="
-          + encodeURIComponent(token) + "&is_new_login=1&next=" + encodeURIComponent("https://api.qishui.com");
-        return call("http.request", {
-          url: "https://api.qishui.com/passport/web/check_qrconnect/?" + passportQuery(),
-          method: "POST",
-          headers: {
-            "User-Agent": UA_PASSPORT,
-            "Content-Type": "application/x-www-form-urlencoded",
-            "Cookie": cookieHeader(pending)
-          },
-          body: form,
-          timeoutMs: 20000
-        }).then(function (response) {
-          var cookies = mergeCookies(pending, response.setCookies);
-          var answer = {};
-          try { answer = JSON.parse(response.body || "{}"); } catch (_) {}
-          var redirect = findJsonString(answer, "redirect_url");
-          return followSodaLoginRedirect(redirect, cookies, 0).then(function (completed) {
-          cookies = completed;
-          if (hasSession(cookies)) {
-            return call("storage.put", {key: "qr" + hex, value: JSON.stringify({cookies: cookies, deviceId: passportDeviceId})})
-              .then(function () { return completeSodaLogin(token, cookies, "qr"); });
-          }
-          var body = {};
-          try { body = JSON.parse(response.body || "{}"); } catch (_) {}
-          var data = body.data || {};
-          if (num(data.error_code) === 7) {
-            return { id: token, methodId: "qr", status: "waiting", message: "正在等待汽水接口冷却" };
-          }
-          if (num(data.error_code) === 2046 || String(data.account_flow || "").toLowerCase() === "verify") {
-            return handleSodaMfa(token, cookies, response.body, body);
-          }
-          var status = String(data.status || "").toLowerCase();
-          if (status === "confirmed" || status === "scanned" || status === "1" || status === "2") {
-            return call("storage.put", { key: "qr" + hex, value: JSON.stringify({cookies: cookies, deviceId: passportDeviceId}) })
-              .then(function () { return { id: token, methodId: "qr", status: "scanned" }; });
-          }
-          if (status === "3" || status === "expired") return { id: token, methodId: "qr", status: "expired" };
-          return { id: token, methodId: "qr", status: "waiting", message: "等待扫码或确认授权" };
-          });
-        }, function () { return { id: token, methodId: "qr", status: "waiting", message: "网络暂未返回登录结果，正在重试" }; });
-      });
-      });
-    }
+    case "poll": return pollSodaChallenge(str(args.challengeId));
     case "submit": {
       var cred = String(args.credential || "").trim();
       if (/^\d{4,8}$/.test(cred)) return validateSodaSms(cred);

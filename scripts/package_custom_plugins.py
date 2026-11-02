@@ -10,6 +10,8 @@ import subprocess
 parser = argparse.ArgumentParser(description=__doc__)
 parser.add_argument("--signing-key", type=Path, help="External PEM EC publisher key; never store it in the repository")
 parser.add_argument("--openssl", default="openssl", help="OpenSSL executable")
+parser.add_argument("--plugin", action="append", choices=("netease", "qqmusic", "soda"),
+                    help="Package only these changed plugins; defaults to all three")
 args = parser.parse_args()
 if args.signing_key and not args.signing_key.is_file():
     parser.error("signing key does not exist")
@@ -17,7 +19,7 @@ if args.signing_key and not args.signing_key.is_file():
 root = Path(__file__).resolve().parents[1]
 output = root / "deliverables"
 output.mkdir(exist_ok=True)
-for name in ("netease", "qqmusic", "soda"):
+for name in args.plugin or ("netease", "qqmusic", "soda"):
     source = root / "custom-plugins" / name
     manifest = json.loads((source / "plugin.json").read_text(encoding="utf-8"))
     files = {"plugin.json": (source / "plugin.json").read_bytes()}

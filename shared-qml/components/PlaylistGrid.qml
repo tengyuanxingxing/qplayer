@@ -198,13 +198,13 @@ Flickable {
         cachedLayout: true
 
         Repeater {
-            model: grid.list
-            windowStart: grid.firstCard
-            windowCount: grid.cardWindow
+            model: Math.min(grid.count, grid.cardWindow)
             PlaylistCard {
                 id: playlistCard
+                property int sourceIndex: grid.firstCard + ((index - grid.firstCard % Math.max(1, Math.min(grid.count, grid.cardWindow)) + Math.max(1, Math.min(grid.count, grid.cardWindow))) % Math.max(1, Math.min(grid.count, grid.cardWindow)))
+                property var entry: grid.list && sourceIndex < grid.count ? grid.list[sourceIndex] : null
                 objectName: "virtualPlaylistCard"
-                playlistId: modelData.id
+                playlistId: playlistCard.entry.id
                 scrollView: grid
                 textAnimationEnabled: grid.pageActive && grid.visible
                     && y + height >= grid.contentY && y <= grid.contentY + grid.height
@@ -214,25 +214,25 @@ Flickable {
                 // exactly the "gap preview" VirtualPlaylistList does with a pixel
                 // shift, just expressed as an index (see the file header comment).
                 property int _effectiveIndex: {
-                    if (grid._dragFrom < 0 || grid._dropIndex < 0 || index === grid._dragFrom) {
-                        return index
+                    if (grid._dragFrom < 0 || grid._dropIndex < 0 || playlistCard.sourceIndex === grid._dragFrom) {
+                        return playlistCard.sourceIndex
                     }
                     if (grid._dragFrom < grid._dropIndex) {
-                        return (index > grid._dragFrom && index <= grid._dropIndex) ? index - 1 : index
+                        return (playlistCard.sourceIndex > grid._dragFrom && playlistCard.sourceIndex <= grid._dropIndex) ? playlistCard.sourceIndex - 1 : playlistCard.sourceIndex
                     }
                     if (grid._dragFrom > grid._dropIndex) {
-                        return (index >= grid._dropIndex && index < grid._dragFrom) ? index + 1 : index
+                        return (playlistCard.sourceIndex >= grid._dropIndex && playlistCard.sourceIndex < grid._dragFrom) ? playlistCard.sourceIndex + 1 : playlistCard.sourceIndex
                     }
-                    return index
+                    return playlistCard.sourceIndex
                 }
                 // Recycling changes the base slot immediately; only a real
                 // drag's gap offset animates, as in SongRow.reorderShift.
                 property real _reorderOffsetX: grid._dragFrom < 0 ? 0
-                    : grid._indexToX(_effectiveIndex) - grid._indexToX(index)
+                    : grid._indexToX(_effectiveIndex) - grid._indexToX(playlistCard.sourceIndex)
                 property real _reorderOffsetY: grid._dragFrom < 0 ? 0
-                    : grid._indexToY(_effectiveIndex) - grid._indexToY(index)
-                x: grid._indexToX(index) + _reorderOffsetX
-                y: grid._indexToY(index) + _reorderOffsetY
+                    : grid._indexToY(_effectiveIndex) - grid._indexToY(playlistCard.sourceIndex)
+                x: grid._indexToX(playlistCard.sourceIndex) + _reorderOffsetX
+                y: grid._indexToY(playlistCard.sourceIndex) + _reorderOffsetY
                 Behavior on _reorderOffsetX {
                     NumberAnimation { duration: 140; easing.type: Easing.OutCubic }
                 }
@@ -241,40 +241,40 @@ Flickable {
                 }
                 // The carried card is drawn once, by the floating copy below, so
                 // its slot in the grid simply empties out.
-                visible: grid._dragFrom !== index
+                visible: grid._dragFrom !== playlistCard.sourceIndex
                 reorderable: grid.reorderable
                 showOverflow: grid.reorderable
-                name: modelData.name
-                count: modelData.trackCount
-                playCount: modelData.playCount || 0
-                coverUrl: modelData.coverUrl
-                coverThumbPath: modelData.coverThumbPath || ""
-                sourceName: modelData.sourceName || ""
-                deletable: !!modelData.deletable
-                subscribed: !!modelData.subscribed
-                onClicked: { grid.pendingPlaylist = modelData; grid.openPlaylist() }
+                name: playlistCard.entry.name
+                count: playlistCard.entry.trackCount
+                playCount: playlistCard.entry.playCount || 0
+                coverUrl: playlistCard.entry.coverUrl
+                coverThumbPath: playlistCard.entry.coverThumbPath || ""
+                sourceName: playlistCard.entry.sourceName || ""
+                deletable: !!playlistCard.entry.deletable
+                subscribed: !!playlistCard.entry.subscribed
+                onClicked: { grid.pendingPlaylist = playlistCard.entry; grid.openPlaylist() }
                 onDeleteRequested: {
-                    grid.pendingPlaylist = modelData
+                    grid.pendingPlaylist = playlistCard.entry
                     grid.deletePlaylistRequested()
                 }
                 onUnsubscribeRequested: {
-                    grid.pendingPlaylist = modelData
+                    grid.pendingPlaylist = playlistCard.entry
                     grid.unsubscribePlaylistRequested()
                 }
                 onReorderPressed: {
                     if (!grid.pageActive || !grid.visible || !grid.enabled || !grid.reorderable
-                            || grid.moving || !grid.list || index < 0 || index >= grid.list.length) {
+                            || grid.moving || !grid.list || playlistCard.sourceIndex < 0 || playlistCard.sourceIndex >= grid.list.length) {
                         playlistCard.cancelReorder()
                         return
                     }
-                    grid._dragPlaylistId = "" + modelData.id
+                    grid._dragPlaylistId = "" + playlistCard.entry.id
                     grid._dragCard = playlistCard
-                    grid._dragFrom = index
-                    grid._dropIndex = index
+                    grid._dragFrom = playlistCard.sourceIndex
+                    grid._dropIndex = playlistCard.sourceIndex
                     grid._dragGrabOffsetX = reorderGrabOffsetX
                     grid._dragGrabOffsetY = reorderGrabOffsetY
-                    grid._dragFloatX = grid._indexToX(index)
-                    grid._dragFloatY = grid._indexToY(index)
+                    grid._dragFloatX = grid._indexToX(playlistCard.sourceIndex)
+                    grid._dragFloatY = grid._indexToY(playlistCard.sourceIndex)
                     grid._dragViewportY = reorderContentY - grid.contentY
                     grid._dragLastActivityMs = Date.now()
                 }

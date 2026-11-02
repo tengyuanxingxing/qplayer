@@ -1249,8 +1249,23 @@ public class PlayerControllerPlaybackTest {
             controller=new PlayerController(new FakeAudioBackend(),track->{},NeteaseClient.INSTANCE);
             controller.playingArtistIdsCsv.set("qq:artist:sample");controller.playingArtistNamesCsv.set("Artist");
             controller.setLyricsOpen(true);controller.openPlayingArtist();
-            assertFalse(controller.lyricsOpen.peek());assertTrue(controller.artistPageOpen.peek());
+            assertTrue("navigation keeps playback in the route stack until the host opens the artist",controller.lyricsOpen.peek());assertTrue(controller.artistPageOpen.peek());
             assertEquals("qq:artist:sample",controller.openSourceArtistId.peek());
+        } finally {if(controller!=null)lifecycle.close(controller);AppDirs.setBase(oldBase);AppDirs.setCacheBase(oldCache);}
+    }
+
+    @Test public void multiArtistPickerKeepsPlaybackOpenAndDragCanBeCanceled() throws Exception {
+        String oldBase=AppDirs.base(),oldCache=AppDirs.cacheBase();PlayerController controller=null;
+        try {
+            Path dir=temporaryFolder.newFolder("playing-artists").toPath();AppDirs.setBase(dir.toString());AppDirs.setCacheBase(dir.resolve("cache").toString());
+            controller=new PlayerController(new FakeAudioBackend(),track->{},NeteaseClient.INSTANCE);
+            controller.setLyricsOpen(true);controller.setCoverMode(true);
+            controller.openSongArtistPicker("qq:artist:one,qq:artist:two","One"+(char)1+"Two");
+            assertTrue(controller.songArtistPickerOpen.peek());assertTrue(controller.lyricsOpen.peek());
+            controller.closeSongArtistPicker();assertTrue(controller.lyricsOpen.peek());
+            controller.updatePlaybackDrag(0.4);assertTrue(controller.playbackDragging.peek());
+            controller.finishPlaybackDrag(0);assertEquals(1,controller.playbackPage.peek().intValue());assertFalse(controller.playbackDragging.peek());
+            controller.updatePlaybackDrag(-0.4);controller.finishPlaybackDrag(1);assertEquals(2,controller.playbackPage.peek().intValue());
         } finally {if(controller!=null)lifecycle.close(controller);AppDirs.setBase(oldBase);AppDirs.setCacheBase(oldCache);}
     }
 

@@ -4,6 +4,18 @@ import miuix.Core
 Rectangle {
     id: panel
     color: "#17202D"
+    property var rows: player.commentsOpen ? player.songComments : []
+    property var rowHeights: []
+    onRowsChanged: rowHeights = []
+    function rowY(at) {
+        var y=0
+        for(var i=0;i<at;i++) y+=(rowHeights[i] || 104)+16
+        return y
+    }
+    function rememberHeight(at, value) {
+        if(at<0 || value<60 || Math.abs((rowHeights[at] || 0)-value)<0.5) return
+        var next=rowHeights.slice();next[at]=value;rowHeights=next
+    }
     // Opaque overlay with its own input surface; the music continues underneath.
     MouseArea { anchors.fill: parent }
     IconButton {
@@ -33,18 +45,17 @@ Rectangle {
         width: parent.width - 32
         height: parent.height - y - settings.bottomInset - 12
         clip: true
-        contentWidth: width; contentHeight: column.height
+        contentWidth: width; contentHeight: panel.rowY(panel.rows.length)+statusText.height+80
         property string requestKey: player.commentsTitle + player.commentsSort
         onRequestKeyChanged: contentY = 0
-        Column {
-            id: column
-            width: scroll.width
-            spacing: 16
             Repeater {
-                model: player.songComments
+                model: panel.rows
                 delegate: Rectangle {
-                    width: column.width
+                    objectName: "songCommentCard"
+                    y: panel.rowY(index)
+                    width: scroll.width
                     height: body.y + body.height + 34
+                    onHeightChanged: panel.rememberHeight(index, height)
                     color: "#222D3C"; radius: 16
                     Text {
                         x: 14; y: 12; width: parent.width - 28
@@ -67,15 +78,16 @@ Rectangle {
                 }
             }
             Text {
-                width: column.width; text: player.commentsStatus
+                id: statusText
+                y: panel.rowY(panel.rows.length); width: scroll.width; text: player.commentsStatus
                 wrapMode: Text.Wrap; color: "#A9BBCC"; font.pixelSize: 14
             }
             Button {
+                y: panel.rowY(panel.rows.length)+statusText.height+16
                 visible: player.commentsHasMore
                 enabled: !player.commentsLoading
                 text: player.commentsLoading ? "加载中…" : "加载更多 / 重试"
                 onClicked: player.loadMoreComments()
             }
-        }
     }
 }

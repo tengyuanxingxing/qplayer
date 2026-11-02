@@ -111,6 +111,9 @@ public final class LyricCompositor {
     private List<LyricLine> lastLyrics;
     private float lyricSlide;
     private long renderedVersion = -1;
+    private int renderedFontSize = -1;
+    private float playbackPagePosition = Float.NaN;
+    private long playbackPageNs;
     // Whether composite() skipped the main-tree relayout this frame (idle fast path).
     // The host reads it for its frame profiler — the skip decision lives here now, so
     // the shell can't compute it itself.
@@ -264,13 +267,13 @@ public final class LyricCompositor {
      *  and a cover-only track has no column to scroll. */
     public boolean playbackSwipeable(float x, float y, float width, float height, float inset) {
         if (width >= height || lyricSlide < 0.99f) return false;
-        if (infoPageCached) return y >= inset + 54f && y <= height - L_TRANSPORT_H;
-        if (!coverOnlyCached) return lyricsScrollable(x, y, width, height, inset);
+        if (!coverOnlyCached && !infoPageCached) return lyricsScrollable(x,y,width,height,inset);
         for (Item card : lyricNotificationCards) {
-            if (notificationContains(card, x, y)) return false;
+            if (notificationContains(card,x,y)) return false;
         }
-        float size = Math.max(96f, Math.min(Math.min(width - 56f, height - inset - 374f), 420f));
-        return y >= inset + 94f && y <= inset + 94f + size;
+        // Info and cover pages forward taps to QML until the direction locks.
+        // Swiping can start on the title/artist/empty content as well as the art.
+        return y >= inset+54f && y <= height-L_TRANSPORT_H;
     }
 
     public boolean lyricsScrollable(float x, float y, float surfaceWLogical,
@@ -313,6 +316,36 @@ public final class LyricCompositor {
     public void composite(Canvas canvas, Renderer renderer, QmlView view,
                           PlayerController controller, SettingsBridge settings,
                           DirectContext ctx, float uiScale, int fbW, int fbH) {
+        int fontSize = LyricConfig.instance.lyricFontSize.getValue();
+        if (renderedFontSize != fontSize) {
+            // Old recorded chrome can retain glyph/image resources across a text-size
+            // switch. Finish the preceding GPU work before dropping its pictures,
+            // then lay out the entire scene once, including currently covered pages.
+            if (renderedFontSize >= 0 && ctx != null) ctx.flushAndSubmit(true);
+            if (renderer.pictureCacheEnabled()) {
+                renderer.setPictureCache(false);
+                renderer.setPictureCache(true);
+            }
+            renderer.layoutOnly(view.root());
+            renderedVersion = -1;
+            renderedFontSize = fontSize;
+        }
+        if (controller != null) {
+            long now = System.nanoTime();
+            float targetPage = controller.playbackPage.peek();
+            if (Boolean.TRUE.equals(controller.playbackDragging.peek())) {
+                playbackPagePosition = Math.max(0f, Math.min(2f,
+                        targetPage - controller.playbackDragOffset.peek().floatValue()));
+            } else if (Float.isNaN(playbackPagePosition) || !Boolean.TRUE.equals(controller.lyricsOpen.peek())) {
+                playbackPagePosition = targetPage;
+            } else {
+                float dt = Math.min(0.05f, Math.max(0f, (now - playbackPageNs) / 1_000_000_000f));
+                playbackPagePosition += (targetPage - playbackPagePosition) * (1f - (float)Math.exp(-dt / 0.065f));
+                if (Math.abs(targetPage - playbackPagePosition) < 0.002f) playbackPagePosition = targetPage;
+            }
+            playbackPageNs = now;
+            controller.playbackPagePosition.set((double)playbackPagePosition);
+        }
         prepareChrome(view, renderer);
         long glassTime = System.nanoTime();
         for (LiquidGlassNode node : liquidGlass) {
@@ -581,6 +614,7 @@ public final class LyricCompositor {
             controller.lyricProgress.set(progress);
         }
 
+        controller.updateLyricPreview(predMs);
         // Re-feed the renderer when the track's lyric list changes (identity).
         List<LyricLine> lyObj = controller.lyrics.peek();
         if (lyObj != lastLyrics) {
@@ -603,7 +637,7 @@ public final class LyricCompositor {
         boolean coverOnly = Boolean.TRUE.equals(controller.lyricsCoverOnly.peek())
                 || Boolean.TRUE.equals(controller.coverModeManual.peek());
         infoPageCached = !landscape && controller.playbackPage.peek() == 0;
-        coverOnlyCached = coverOnly;
+        coverOnlyCached = landscape ? coverOnly : controller.playbackPage.peek() != 2;
         // Full-width is a wide-window layout, and it has nothing to say about a
         // track with no lyrics — that view is the cover, which this mode removes.
         boolean cloud = settings != null && settings.lyricLayoutCloud();
@@ -713,7 +747,7 @@ public final class LyricCompositor {
         // cover shows in its place (centered portrait, in the left chrome landscape).
         // Ease the column's zoom state toward 1 (has lyrics) or 0 (cover-only), so the
         // switch scales + fades the whole lyric layer instead of it just blinking out.
-        float zoomTarget = coverOnly ? 0f : 1f;
+        float zoomTarget = landscape && coverOnly ? 0f : 1f;
         long zoomNow = System.nanoTime();
         if (lyricShowNs != 0L) {
             float dt = (zoomNow - lyricShowNs) / 1_000_000_000f;
@@ -725,7 +759,8 @@ public final class LyricCompositor {
         lyricShowNs = zoomNow;
         if (Math.abs(lyricShow - zoomTarget) < 0.002f) lyricShow = zoomTarget;
 
-        if (lyricShow > 0.001f) {
+        if (!landscape) lyricShow = 1f;
+        if (lyricShow > 0.001f && (landscape || playbackPagePosition > 1.001f)) {
             if (lyColRect == null || lyColLeft != colLeft || lyColTopY != colTopY
                     || lyColW != w || lyColH != colH) {
                 lyColRect = Rect.makeXYWH(colLeft, colTopY, w - colLeft, colH);
@@ -771,7 +806,7 @@ public final class LyricCompositor {
             float cx = colLeft + (w - colLeft) * 0.5f;
             float cy = colTopY + colH * 0.5f;
             int zc = canvas.save();
-            if (!landscape) canvas.translate(w * (1f - lyricShow), 0f);
+            if (!landscape) canvas.translate(w * (2f - playbackPagePosition), 0f);
             canvas.translate(cx, cy);
             canvas.scale(s, s);
             canvas.translate(-cx, -cy);
@@ -791,8 +826,10 @@ public final class LyricCompositor {
             // back on within a couple of frames of the target being reached, which
             // reads as smoothing out through the fast part of the motion rather
             // than a visible pop.
-            boolean transitionSettled = lyricShow == zoomTarget && fullWidthSwap >= 0.999f;
-            if (transitionSettled && Boolean.TRUE.equals(LyricConfig.instance.edgeBlur.getValue())) {
+            boolean transitionSettled = (landscape ? lyricShow == zoomTarget
+                    : Math.abs(playbackPagePosition - 2f) < 0.001f && !Boolean.TRUE.equals(controller.playbackDragging.peek()))
+                    && fullWidthSwap >= 0.999f;
+            if (transitionSettled && !lyricRenderer.userScrolling() && Boolean.TRUE.equals(LyricConfig.instance.edgeBlur.getValue())) {
                 drawProgressiveBlurColumn(canvas, colRect, colLeft + pad, colTopY, colW, colH, pos);
             } else {
                 lyricRenderer.render(canvas, colLeft + pad, colTopY, colW, colH, pos);

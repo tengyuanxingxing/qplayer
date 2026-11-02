@@ -16,8 +16,8 @@ android {
         applicationId = "dev.t1m3.qplayer"
         minSdk = 26
         targetSdk = 34
-        versionCode = 110
-        versionName = "1.9.11-custom"
+        versionCode = 111
+        versionName = "1.9.12-custom"
         manifestPlaceholders["appLabel"] = "QPlayer"
     }
 
@@ -52,13 +52,17 @@ android {
         // Distinct applicationId so a debug build installs alongside the
         // (differently-signed) release without a signature-mismatch conflict.
         named("debug") {
+            // Custom distributions retain the original .debug identity and signing
+            // key for in-place updates, but ship without ART's debugging overhead.
+            isDebuggable = false
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
             manifestPlaceholders["appLabel"] = "QPlayer (debug)"
         }
         // Release-speed binary with a side-by-side id, signed by the debug
         // keystore so a local machine without QPLAYER_KEYSTORE can still
-        // install it. Use this to measure frame time; debug is too slow.
+        // install it. The custom debug-identity distribution above also disables
+        // debugging; this variant remains a separate profiling installation.
         create("perf") {
             initWith(getByName("release"))
             applicationIdSuffix = ".perf"

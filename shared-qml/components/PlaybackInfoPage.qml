@@ -17,7 +17,7 @@ Item {
         Item {
             id: info
             x: 24; y: 8; width: scroll.width - 48
-            height: credits.y + credits.height + 84
+            height: album.y + album.height + 16
             Text {
                 id: title
                 width: parent.width; text: player.title
@@ -55,26 +55,11 @@ Item {
                 enabled: player.playbackAlbumId !== ""
                 onClicked: player.openPlaybackAlbum()
             }
-            Text {
-                id: credits
-                y: album.y + album.height + 22; width: parent.width
-                text: player.playbackCredits
-                color: "#A9BCCB"; font.pixelSize: 15; wrapMode: Text.Wrap
-            }
-            Rectangle {
-                x: 0; y: credits.y + credits.height + 22; width: 112; height: 38; radius: 19
-                color: "#334A5B"
-                Text { anchors.centerIn: parent; text: "查看评论  ›"; font.pixelSize: 14; color: "#DFEAF1" }
-                MouseArea { anchors.fill: parent; onClicked: player.openCurrentComments() }
-            }
-            Text {
-                x: 128; y: credits.y + credits.height + 32; width: parent.width - 128
-                text: player.playbackGenre; color: "#A9BCCB"; font.pixelSize: 13; elide: Text.ElideRight
-            }
+
         }
         Text {
             x: 24; y: info.height + 12
-            text: "继续听 · " + player.artist
+            text: "继续听 · " + player.artist; width: scroll.width - 48; elide: Text.ElideRight
             color: "white"; font.pixelSize: 19; font.weight: Font.DemiBold
         }
         Repeater {

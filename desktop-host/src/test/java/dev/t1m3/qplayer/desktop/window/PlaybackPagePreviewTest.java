@@ -73,6 +73,7 @@ public class PlaybackPagePreviewTest {
                                     compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,w,h);
                                     Thread.sleep(10);
                                 }
+                                assertNull("cover/lyrics toolbar toggle was removed",view.findByObjectName("lyricCoverModeBtn"));
                                 Item pause=view.findByObjectName("lyricPauseButton");assertNotNull(pause);
                                 assertTrue("large play button",pause.width.peekFloat()>=55);
                                 String out=System.getProperty("qplayer.preview.dir");
@@ -93,15 +94,52 @@ public class PlaybackPagePreviewTest {
                         }
                     }
                     view.root().width.set(390);view.root().height.set(844);
-                    player.commentsOpen.set(true);player.commentsTitle.set("在路上 · 评论");
+                    player.setCoverMode(true);queue.flush();view.renderer().layoutOnly(view.root());
+                    try(Surface surface=Surface.makeRasterN32Premul(390,844)) {
+                        player.updatePlaybackDrag(0.35);
+                        for(int i=0;i<3;i++){queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);}
+                        assertEquals("page moves under the finger before release",0.65,player.playbackPagePosition.peek(),0.001);
+                        Item coverHeader=view.findByObjectName("coverPortraitHeader");
+                        assertTrue("cover follows a rightward drag to the information page",coverHeader.x.peekFloat()>130);
+                        player.finishPlaybackDrag(0);
+                        for(int i=0;i<65;i++){queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);Thread.sleep(8);}
+                        assertEquals("canceled partial swipe returns to cover",1.0,player.playbackPagePosition.peek(),0.001);
+                        assertFalse("cover now shows the current lyric",player.currentLyricText.peek().isEmpty());
+                        player.openSongArtistPicker("qq:artist:one,qq:artist:two","歌手一"+(char)1+"歌手二");
+                        for(int i=0;i<4;i++){queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);}
+                        assertTrue("artist chooser keeps the playback layer open",player.lyricsOpen.peek());
+                        assertNotNull(view.findByObjectName("playbackArtistChoice"));
+                        String out=System.getProperty("qplayer.preview.dir");
+                        if(out!=null)try(Image img=surface.makeImageSnapshot();Data data=img.encodeToData()){Files.write(Paths.get(out,"playback-artist-picker.png"),data.getBytes());}
+                        player.closeSongArtistPicker();queue.flush();
+                    }
+                    Item entry=view.findByObjectName("coverCommentsEntry");assertNotNull(entry);
+                    java.util.Map<String,Object> point=view.root().mapFromItem(entry,entry.width.peekFloat()/2,entry.height.peekFloat()/2);
+                    float px=((Number)point.get("x")).floatValue(),py=((Number)point.get("y")).floatValue();
+                    view.dispatchPointerDown(px,py);view.dispatchPointerUp(px,py);queue.flush();
+                    assertTrue("cover comments entry receives an actual pointer tap",player.commentsOpen.peek());
+                    player.commentsTitle.set("在路上 · 评论");
                     dev.t1m3.qplayer.media.SongComment comment=new dev.t1m3.qplayer.media.SongComment();
                     comment.id="preview";comment.author="评论界面示例";comment.content="这里展示音源返回的真实评论内容。此条仅用于界面预览。";comment.time="2026-11-02";comment.likeCount=12;
-                    player.songComments.set(java.util.Arrays.asList(comment));
+                    dev.t1m3.qplayer.media.SongComment second=new dev.t1m3.qplayer.media.SongComment();
+                    second.id="second";second.author="第二位听众";second.content="第二条评论应排列在第一条下方。";second.time="2026-11-02";
+                    player.songComments.set(java.util.Arrays.asList(comment,second));
                     player.commentsStatus.set("评论页布局预览");
                     try(Surface surface=Surface.makeRasterN32Premul(390,844)) {
                         for(int i=0;i<6;i++){queue.flush();view.renderer().layoutOnly(view.root());compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);}
                         String out=System.getProperty("qplayer.preview.dir");
                         if(out!=null)try(Image img=surface.makeImageSnapshot();Data data=img.encodeToData()){Files.write(Paths.get(out,"comments-390.png"),data.getBytes());}
+                    }
+                    player.commentsOpen.set(false);player.setCoverMode(false);
+                    for(int step=0;step<6;step++) {
+                        int textSize=step%3;settings.setValue("playerTextSize",textSize);
+                        try(Surface surface=Surface.makeRasterN32Premul(390,844)) {
+                            for(int frame=0;frame<45;frame++) {view.tickAnimations(System.nanoTime());queue.flush();compositor.composite(surface.getCanvas(),view.renderer(),view,player,settings,null,1f,390,844);Thread.sleep(8);}
+                            boolean hit=false;for(int y=150;y<640;y+=4)for(int x=28;x<362;x+=12)if(compositor.lyricRenderer().timeAtPoint(x,y)>=0)hit=true;
+                            assertTrue("text remains shaped after repeated size switches",hit);
+                            String out=System.getProperty("qplayer.preview.dir");
+                            if(out!=null && step>=3)try(Image img=surface.makeImageSnapshot();Data data=img.encodeToData()){Files.write(Paths.get(out,"text-size-"+textSize+".png"),data.getBytes());}
+                        }
                     }
                 } finally {queue.uninstall();}
             }

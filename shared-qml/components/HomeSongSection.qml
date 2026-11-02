@@ -10,7 +10,7 @@ Item {
     property var songs: []
     property string kind: "home"
     property bool pageActive: true
-    height: 312
+    height: songs.length > 0 ? 72 + Math.min(3, songs.length) * 76 : 92
     function play(index) {
         if (section.kind === "heart") player.playHeartExplore(index)
         else if (section.kind === "related") player.playPlaybackRelated(index)
@@ -20,11 +20,12 @@ Item {
         x:20;y:4;width:parent.width-112;text:section.title
         font.pixelSize:21;font.weight:Font.DemiBold;color:Theme.color.onSurfaceColor;elide:Text.ElideRight
     }
-    IconButton { anchors.right:parent.right;anchors.rightMargin:20;y:0;icon:"play_arrow";onClicked:section.play(0) }
+    IconButton { anchors.right:parent.right;anchors.rightMargin:20;y:0;icon:"play_arrow";enabled:section.songs.length>0;onClicked:section.play(0) }
     Text { x:20;y:36;width:parent.width-40;text:section.subtitle;font.pixelSize:12;color:Theme.color.onSurfaceVariantSummary;elide:Text.ElideRight }
+    Text { x:20;y:62;width:parent.width-40;visible:section.songs.length===0;text:"暂未返回歌曲，刷新后重试";font.pixelSize:13;color:Theme.color.onSurfaceVariantSummary }
     Flickable {
         id:horizontal
-        x:0;y:60;width:parent.width;height:238
+        x:0;y:60;width:parent.width;height:Math.min(3,section.songs.length)*76
         clip:true;contentHeight:height
         property real columnWidth:Math.min(420,width-26)
         contentWidth:Math.max(width,Math.ceil(section.songs.length/3)*columnWidth+12)

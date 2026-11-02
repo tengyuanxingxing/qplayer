@@ -99,6 +99,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private boolean lyPortrait;
     private final dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture pageGesture = new dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture();
     private float lyDownY;
+    private float lyDownX;
     private long lyDownTimeNanos;
     // Movement (logical px) past which a lyric-body touch is a scroll rather than a tap.
     // True while the current touch stream started inside the bottom system-gesture
@@ -298,6 +299,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         if (disposed) return;
         queueEvent(() -> {
             lyGrab = false; lyMoved = false;
+            if (controller != null) controller.finishPlaybackDrag(0);
             compositor.lyricRenderer().scrollCancel();
             if (view != null) view.dispatchPointerCancel();
         });
@@ -375,6 +377,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     private void dispatchTouchEvent(MotionEvent event, int pointerIndex, int action) {
         if (action == MotionEvent.ACTION_CANCEL) {
+            if (controller != null) controller.finishPlaybackDrag(0);
             if (lyGrab) {
                 lyGrab = false;
                 if (lyMoved) compositor.lyricRenderer().scrollCancel();
@@ -391,7 +394,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             // Only host-drawn lyric hit testing requires surface dimensions.
             SkijaGlSurface gl = surface;
             boolean offsetPanelOpen = controller != null
-                    && (Boolean.TRUE.equals(controller.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controller.commentsOpen.peek()));
+                    && (Boolean.TRUE.equals(controller.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controller.commentsOpen.peek()) || Boolean.TRUE.equals(controller.songArtistPickerOpen.peek()));
             if (gl != null && !compositor.temperaVisible(controller) && !offsetPanelOpen
                     && (compositor.lyricsScrollable(x, y, gl.width() / uiScale,
                             gl.height() / uiScale, insetTop()) || compositor.playbackSwipeable(x, y,
@@ -401,10 +404,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 lyPortrait = gl.width() < gl.height();
                 lyCanScroll = compositor.lyricsScrollable(x, y, gl.width() / uiScale, gl.height() / uiScale, insetTop());
                 lyTapTime = lyCanScroll ? compositor.lyricRenderer().timeAtPoint(x, y) : -1L;
-                lyInfoGesture = controller != null && controller.playbackPage.peek() == 0;
+                lyInfoGesture = controller != null && controller.playbackPage.peek() != 2;
                 lyInfoCanceled = false;
                 if (lyInfoGesture) view.dispatchPointerDown(x, y, eventTimeNanos);
                 pageGesture.begin(x, y);
+                lyDownX = x;
                 lyDownY = y;
                 lyDownTimeNanos = eventTimeNanos;
                 lyMoved = false;
@@ -428,9 +432,9 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             if (lyGrab) {
                 lyGrab = false;
                 int swipe = pageGesture.finish(x, y);
-                if (lyPortrait && swipe != 0 && controller != null) {
+                if (lyPortrait && pageGesture.direction() == 2 && controller != null) {
                     compositor.lyricRenderer().scrollCancel();
-                    controller.swipePlaybackPage(swipe);
+                    controller.finishPlaybackDrag(swipe);
                 } else if (lyInfoGesture) {
                     if (!lyInfoCanceled) view.dispatchPointerUp(x, y, eventTimeNanos);
                 } else if (lyMoved) {
@@ -451,6 +455,8 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private void dispatchTouchMove(float x, float y, long eventTimeNanos) {
         if (lyGrab) {
             int direction = pageGesture.move(x, y);
+            if (lyPortrait && direction == 2 && controller != null)
+                controller.updatePlaybackDrag((x - lyDownX) / Math.max(1f, getWidth() / uiScale));
             if (lyInfoGesture) {
                 if (direction == 2) { if (!lyInfoCanceled) view.dispatchPointerCancel(); lyInfoCanceled = true; }
                 else view.dispatchPointerMove(x, y, eventTimeNanos);
@@ -706,6 +712,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         private void surfaceChanged(int width, int height) {
             if (failed || disposed || surface == null) return;
             surface.resize(width, height);
+            requestSmoothFrameRate();
             try {
                 if (view == null) {
                     view = bundle.configure(QmlView.withStockTypes(engine), resources);
@@ -874,6 +881,27 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
 
     private static double round1(double v) {
         return Math.round(v * 10.0) / 10.0;
+    }
+
+    /** Let Android schedule this surface at a supported high refresh rate. This
+     * is a frame-pacing hint, not a promise that rendering meets that budget. */
+    private void requestSmoothFrameRate() {
+        if (android.os.Build.VERSION.SDK_INT < 30) return;
+        try {
+            android.view.Display display = getDisplay();
+            if (display == null) return;
+            android.view.Display.Mode current = display.getMode();
+            float rate = current.getRefreshRate();
+            for (android.view.Display.Mode mode : display.getSupportedModes()) {
+                if (mode.getPhysicalWidth() == current.getPhysicalWidth()
+                        && mode.getPhysicalHeight() == current.getPhysicalHeight()
+                        && mode.getRefreshRate() > rate && mode.getRefreshRate() <= 120.1f)
+                    rate = mode.getRefreshRate();
+            }
+            getHolder().getSurface().setFrameRate(rate, android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
+        } catch (RuntimeException ignored) {
+            // Older vendor implementations can reject an otherwise valid hint.
+        }
     }
 
     // First QML load/render failure: stop the loop (so it doesn't crash-spin),

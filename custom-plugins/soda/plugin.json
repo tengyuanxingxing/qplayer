@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "id": "soda",
   "name": "汽水音乐（定制版）",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "apiVersion": "1.0",
   "minHostVersion": "1.9.11-custom",
   "entry": "src/main.js",

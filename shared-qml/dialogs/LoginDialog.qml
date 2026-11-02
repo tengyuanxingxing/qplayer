@@ -47,6 +47,7 @@ Item {
     onSuccessRevisionChanged: if (active) dialog.closed()
 
     function statusText(code) {
+        if ((code === 801 || code === 802) && player.qrStatusMessage.length > 0) return player.qrStatusMessage;
         if (code === 0) return i18n.t("login.qr.loading");
         if (code === 802) return dialog.loginMode === 3
                     ? i18n.t("login.app.confirm") : i18n.t("login.qr.confirm");

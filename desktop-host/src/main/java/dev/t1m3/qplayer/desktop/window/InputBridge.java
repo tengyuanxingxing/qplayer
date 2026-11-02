@@ -77,6 +77,7 @@ final class InputBridge {
     private boolean lyPortrait;
     private final dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture pageGesture = new dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture();
     private float lyDownY;
+    private float lyDownX;
     private long lyDownTimeNanos;
 
     InputBridge(DesktopWindow win) {
@@ -321,7 +322,7 @@ final class InputBridge {
         LyricCompositor c = win.compositor();
         PlayerController controllerForGesture = win.controller();
         boolean offsetPanelOpen = controllerForGesture != null
-                && (Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.commentsOpen.peek()));
+                && (Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.commentsOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.songArtistPickerOpen.peek()));
         float topInset = win.settings() != null ? win.settings().topInset() : 0f;
         float uiScale = win.uiScale();
         float surfaceWLogical = win.framebufferSize()[0] / uiScale;
@@ -408,7 +409,7 @@ final class InputBridge {
         LyricCompositor c = win.compositor();
         PlayerController controllerForGesture = win.controller();
         boolean offsetPanelOpen = controllerForGesture != null
-                && (Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.commentsOpen.peek()));
+                && (Boolean.TRUE.equals(controllerForGesture.lyricOffsetPanelOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.commentsOpen.peek()) || Boolean.TRUE.equals(controllerForGesture.songArtistPickerOpen.peek()));
         // The lyric body (between the QML title and transport bands) is host-drawn
         // with no QML controls under it: a drag scrolls, a tap seeks. Wait for slop
         // before engaging the scroll so a tap stays a tap. Suppressed while the
@@ -419,10 +420,11 @@ final class InputBridge {
             lyPortrait = surfaceWLogical < surfaceHLogical;
             lyCanScroll = c.lyricsScrollable(lx, ly, surfaceWLogical, surfaceHLogical, topInset);
             lyTapTime = lyCanScroll ? c.lyricRenderer().timeAtPoint(lx, ly) : -1L;
-            lyInfoGesture = controllerForGesture != null && controllerForGesture.playbackPage.peek() == 0;
+            lyInfoGesture = controllerForGesture != null && controllerForGesture.playbackPage.peek() != 2;
             lyInfoCanceled = false;
             if (lyInfoGesture) v.dispatchPointerDown(lx, ly, eventTimeNanos);
             pageGesture.begin(lx, ly);
+            lyDownX = lx;
             lyDownY = ly;
             lyDownTimeNanos = eventTimeNanos;
             lyMoved = false;
@@ -438,6 +440,8 @@ final class InputBridge {
         if (lyGrab) {
             LyricCompositor c = win.compositor();
             int direction = pageGesture.move(lx, ly);
+            if (lyPortrait && direction == 2 && win.controller() != null)
+                win.controller().updatePlaybackDrag((lx - lyDownX) / Math.max(1f, win.framebufferSize()[0] / win.uiScale()));
             if (lyInfoGesture) {
                 if (direction == 2) { if (!lyInfoCanceled) win.view().dispatchPointerCancel(); lyInfoCanceled = true; }
                 else win.view().dispatchPointerMove(lx, ly, eventTimeNanos);
@@ -471,9 +475,9 @@ final class InputBridge {
             LyricCompositor c = win.compositor();
             PlayerController controller = win.controller();
             int swipe = pageGesture.finish(lx, ly);
-            if (lyPortrait && swipe != 0 && controller != null) {
+            if (lyPortrait && pageGesture.direction() == 2 && controller != null) {
                 c.lyricRenderer().scrollCancel();
-                controller.swipePlaybackPage(swipe);
+                controller.finishPlaybackDrag(swipe);
             } else if (lyInfoGesture) {
                 if (!lyInfoCanceled) win.view().dispatchPointerUp(lx, ly, eventTimeNanos);
             } else if (lyMoved) {
@@ -511,6 +515,7 @@ final class InputBridge {
     /** Render-thread only: end capture without a synthetic release/click/fling. */
     void cancelPointerGesture() {
         primaryPressed = false;
+        if (win.controller() != null) win.controller().finishPlaybackDrag(0);
         clearWheelTail();
         lyGrab = false;
         lyMoved = false;

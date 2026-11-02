@@ -502,6 +502,7 @@ public final class PlayerController {
     public final Property<Boolean> coverModeManual = new Property<>(Boolean.FALSE);
     /** Index of the current lyric line for player.positionMs, or -1. */
     public final Property<Integer> lyricIndex = new Property<>(-1);
+    public final Property<String> currentLyricText = new Property<>("");
     /** Whether the full-screen lyric page is open (host draws it via Skija). */
     public final Property<Boolean> lyricsOpen = new Property<>(false);
     /** True while a fullscreen route (settings, lyrics, playlist, …) covers the
@@ -3609,16 +3610,28 @@ public final class PlayerController {
         return false;
     }
 
+    private List<LyricLine> previewLyricSource;
+    private int previewLyricIndex = -2;
     private void updateLyricIndex(long pos) {
         List<LyricLine> ly = lyrics.peek();
         int idx = -1;
         if (ly != null && !ly.isEmpty()) {
-            for (int i = 0; i < ly.size(); i++) {
-                if (ly.get(i).startMs() <= pos) idx = i;
-                else break;
+            int low=0, high=ly.size()-1;
+            while(low<=high) {
+                int mid=(low+high)>>>1;
+                if(ly.get(mid).startMs()<=pos) {idx=mid;low=mid+1;} else high=mid-1;
             }
         }
         if (idx != lyricIndex.peek()) lyricIndex.set(idx);
+        if (previewLyricSource != ly || previewLyricIndex != idx) {
+            previewLyricSource=ly;previewLyricIndex=idx;
+            currentLyricText.set(idx >= 0 ? ly.get(idx).text() : "");
+        }
+    }
+
+    /** Shared interpolated audio clock keeps the cover's single-line lyric in sync. */
+    public void updateLyricPreview(long position) {
+        updateLyricIndex(position - LyricConfig.instance.offsetMs.getValue());
     }
 
     private volatile Runnable renderWake;
@@ -3789,6 +3802,21 @@ public final class PlayerController {
     }
 
     public final Property<Integer> playbackPage = new Property<>(2);
+    public final Property<Double> playbackPagePosition = new Property<>(2.0);
+    public final Property<Double> playbackDragOffset = new Property<>(0.0);
+    public final Property<Boolean> playbackDragging = new Property<>(false);
+    public void updatePlaybackDrag(double offset) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            playbackDragOffset.set(Math.max(-1.0, Math.min(1.0, offset)));
+            playbackDragging.set(true);
+        }
+    }
+    public void finishPlaybackDrag(int direction) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (direction != 0) swipePlaybackPage(direction);
+            playbackDragging.set(false);playbackDragOffset.set(0.0);
+        }
+    }
     public final Property<String> playbackAlbumId = new Property<>("");
     public final Property<String> playbackAlbumName = new Property<>("");
     public final Property<String> playbackRelease = new Property<>("");
@@ -8194,9 +8222,6 @@ public final class PlayerController {
                 refs.add(ref);
             }
             if (refs.isEmpty()) return;
-            // Both the direct single-artist route and the picker must be above
-            // the separately composited playback layer.
-            if (Boolean.TRUE.equals(lyricsOpen.peek())) setLyricsOpen(false);
             // A single credit has no choice to make. Use the exact same entry point as
             // selecting an item from the multi-artist dialog, but skip the dialog and
             // its avatar request entirely.
@@ -8205,8 +8230,8 @@ public final class PlayerController {
                 openArtistCredit(refs.get(0));
                 return;
             }
-            // The lyric chrome is a separate host pass above Main.qml. A picker
-            // opened while that layer is up is covered, so drop lyrics first.
+            // The playback chrome owns a local chooser above its host-drawn lyrics.
+            // Keep the playback route alive until an artist is actually selected.
             songArtistPickerList.set(refs);
             songArtistPickerOpen.set(true);
             // A song's own artist credits carry no avatar (id/name only) -- fetch
@@ -9872,6 +9897,7 @@ public final class PlayerController {
     private volatile java.nio.file.Path pendingQrImageFile;
     /** 0 loading / 800 expired / 801 waiting / 802 scanned / 803 success. */
     public final Property<Integer> qrStatus = new Property<>(0);
+    public final Property<String> qrStatusMessage = new Property<>("");
     /** Whether this shell can embed the official website in a system WebView. */
     public final Property<Boolean> webLoginAvailable = new Property<>(false);
     /** True while the browser is open or a pasted/browser Cookie is being checked. */
@@ -10006,6 +10032,7 @@ public final class PlayerController {
             post(
                     () -> {
                         qrStatus.set(0);
+                        qrStatusMessage.set("");
                         qrImagePath.set("");
                         publishAppLink("", loginAppButtonLabel.peek());
                     });
@@ -10056,6 +10083,7 @@ public final class PlayerController {
             post(
                     () -> {
                         qrStatus.set(0);
+                        qrStatusMessage.set("");
                         publishAppLink("", loginAppButtonLabel.peek());
                     });
             final String provider = pendingPluginLoginProvider;
@@ -10137,6 +10165,7 @@ public final class PlayerController {
                                                         return;
                                                     if (error == null)
                                                         applyPluginLoginChallenge(result, false);
+                                                    else qrStatusMessage.set("网络暂未返回登录结果，正在重试");
                                                 });
                                     } finally {
                                         loginPollInFlight.set(false);
@@ -10174,6 +10203,7 @@ public final class PlayerController {
 
     private void applyPluginLoginChallenge(LoginChallenge challenge, boolean credentialFlow) {
         if (challenge == null) return;
+        qrStatusMessage.set(challenge.message == null ? "" : challenge.message);
         if (challenge.id != null && !challenge.id.isEmpty()) {
             pendingPluginLoginChallenge = challenge.id;
         }

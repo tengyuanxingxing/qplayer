@@ -52,6 +52,47 @@ public class VirtualSongListReuseTest {
             } finally {q.uninstall();}
         } finally {if(view!=null)view.dispose();if(player!=null)player.shutdownAsync().join();AppDirs.setBase(base);AppDirs.setCacheBase(cache);}
     }
+    @Test public void playlistListAndGridReuseTheirPoolsAndKeepTheCorrectTapTarget() throws Exception {
+        String base=AppDirs.base(),cache=AppDirs.cacheBase();PlayerController player=null;
+        try {
+            Path dir=Files.createTempDirectory("playlist-pools");AppDirs.setBase(dir.toString());AppDirs.setCacheBase(dir.resolve("cache").toString());
+            AudioBackend backend=(AudioBackend)Proxy.newProxyInstance(AudioBackend.class.getClassLoader(),new Class<?>[]{AudioBackend.class},(p,m,a)->{
+                if(m.getReturnType()==boolean.class)return false;if(m.getReturnType()==long.class)return 0L;return null;
+            });
+            player=new PlayerController(backend,t->{});SettingsCore settings=new SettingsCore();settings.load(new JsonSettingsStore(),SettingsCatalog.DESKTOP);
+            List<dev.t1m3.qplayer.media.Playlist> data=new ArrayList<>();
+            for(int i=0;i<5000;i++){dev.t1m3.qplayer.media.Playlist p=new dev.t1m3.qplayer.media.Playlist();p.id="qq:playlist:"+i;p.name="Playlist "+i;p.trackCount=i;data.add(p);}
+            for(boolean grid:new boolean[]{false,true}) {
+                QmlView view=QmlView.withStockTypes(new QmlEngine()).resources(new ClasspathResourceLoader())
+                    .context("player",player).context("settings",settings).context("i18n",I18n.instance()).context("fixtureRows",data);
+                try {
+                    view.load("import QtQuick\nimport \"components\"\n"+(grid?"PlaylistGrid":"VirtualPlaylistList")
+                        +" {width:390;height:416;list:fixtureRows;property string tappedId: \"\";onOpenPlaylist:tappedId=pendingPlaylist.id}");
+                    DirtyQueue q=view.dirtyQueue();q.install();
+                    try {
+                        settle(view);String marker=grid?"virtualPlaylistCard":"virtualPlaylistListRow";
+                        List<Item> pool=new ArrayList<>();collectNamed(view.root(),pool,marker);assertTrue(pool.size()>0 && pool.size()<20);
+                        Map<Item,Integer> before=new IdentityHashMap<>();for(Item item:pool)before.put(item,prop(item,"sourceIndex").peekInt());
+                        float rowH=grid?prop(view.root(),"cardRowH").peekFloat():64f;
+                        float offset=grid?16f+2.1f*rowH:256f;prop(view.root(),"contentY").set(offset);settle(view);
+                        int changed=0;for(Item item:pool)if(before.get(item)!=prop(item,"sourceIndex").peekInt())changed++;
+                        assertEquals("only the entering row of playlists rebinds",grid?2:1,changed);
+                        List<Item> after=new ArrayList<>();collectNamed(view.root(),after,marker);assertEquals(pool,after);
+                        for(Item item:pool) {
+                            Map<String,Object> point=view.root().mapFromItem(item,50,30);
+                            float x=((Number)point.get("x")).floatValue(),y=((Number)point.get("y")).floatValue();
+                            if(y<20 || y>390)continue;
+                            String expected="qq:playlist:"+prop(item,"sourceIndex").peekInt();
+                            assertEquals(expected,prop(item,"playlistId").peek());
+                            view.dispatchPointerDown(x,y);view.dispatchPointerUp(x,y);q.flush();
+                            assertEquals("recycled playlist keeps its actual action target",expected,prop(view.root(),"tappedId").peek());break;
+                        }
+                    } finally {q.uninstall();}
+                } finally {view.dispose();}
+            }
+        } finally {if(player!=null)player.shutdownAsync().join();AppDirs.setBase(base);AppDirs.setCacheBase(cache);}
+    }
+    private static void collectNamed(Item node,List<Item> rows,String marker){if(marker.equals(node.objectName.peek()))rows.add(node);for(Item child:node.children)collectNamed(child,rows,marker);}
     @SuppressWarnings("unchecked") private static Property<Object> prop(Item item,String name)throws Exception{return (Property<Object>)item.getClass().getField(name).get(item);}
     private static void collect(Item node,List<Item> rows){if("virtualSongRow".equals(node.objectName.peek()))rows.add(node);for(Item child:node.children)collect(child,rows);}
     private static void settle(QmlView view){for(int i=0;i<4;i++){view.dirtyQueue().flush();view.renderer().layoutOnly(view.root());}view.dirtyQueue().flush();}

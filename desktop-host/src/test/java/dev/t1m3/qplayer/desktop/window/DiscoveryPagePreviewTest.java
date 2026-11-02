@@ -64,6 +64,10 @@ public class DiscoveryPagePreviewTest {
                     Item section=view.findByObjectName("homeSongSection");
                     assertTrue("Home section enabled",Boolean.TRUE.equals(prop(section,"pageActive").peek()));
                     assertTrue("Home section renders actual song rows",hasSongRow(section));
+                    player.sourceRecommendations.set(new ArrayList<>());settle(view);
+                    assertTrue("empty recommendations collapse",section.height.peekFloat()<110);
+                    snapshot(view,player,settings,compositor,"home-empty-390",0);
+                    player.sourceRecommendations.set(songs);settle(view);
                     Item homeScroll=view.findByObjectName("homeRecommendationsScroll");assertNotNull(homeScroll);
                     prop(homeScroll,"contentY").set(600f);snapshot(view,player,settings,compositor,"home-hearts-390",0);
                     player.lyricsOpen.set(true);player.setCoverMode(true);player.swipePlaybackPage(-1);
@@ -76,11 +80,19 @@ public class DiscoveryPagePreviewTest {
                     player.lyricsOpen.set(false);settle(view);
                     player.openSourceArtistId.set("qq:artist:preview");player.artistName.set("示例音乐人");player.artistCoverPath.set(art.toString());player.artistBriefDesc.set("歌手主页布局预览，歌曲与专辑来自测试数据。");
                     player.sourceArtistSongs.set(songs);List<Album> albums=new ArrayList<>();
-                    String[] types={"album","live","ep","single"};for(int i=0;i<4;i++){Album a=new Album();a.id="qq:album:preview"+i;a.name=new String[]{"沿途","剧场现场","日落 EP","新的旅程"}[i];a.releaseType=types[i];a.coverUrl=art.toString();a.trackCount=4;a.publishTimeMs=1793577600000L;albums.add(a);}
+                    String[] types={"album","live","ep","single"};for(int i=0;i<4;i++){Album a=new Album();a.id="qq:album:preview"+i;a.name=new String[]{"沿途","剧场现场","日落 EP","新的旅程"}[i];a.releaseType=types[i];a.coverUrl=art.toString();a.trackCount=4;a.publishTimeMs=1793577600000L-i*86400000L;albums.add(a);}
+                    java.util.Collections.reverse(albums);
                     player.sourceArtistAlbums.set(albums);player.pageNavigationTarget.set("artist");player.pageNavigationEntityId.set("qq:artist:preview");player.pageNavigationRevision.set(1L);settle(view);
                     snapshot(view,player,settings,compositor,"artist-songs-390",0);
-                    Item tab=view.findByObjectName("artistContentTabs");assertNotNull(tab);Item page=tab.parent.peek().parent.peek();
+                    Item tab=view.findByObjectName("artistContentTabs");assertNotNull(tab);Item page=view.findByObjectName("artistDetailPage");
                     prop(page,"albumsTab").set(true);snapshot(view,player,settings,compositor,"artist-albums-390",0);
+                    assertEquals("album order is newest first","沿途",prop(view.findByObjectName("artistAlbumTitle"),"text").peek());
+                    Item artistScroll=view.findByObjectName("artistDetailScroll");
+                    prop(artistScroll,"contentY").set(160f);settle(view);
+                    java.util.Map<String,Object> heroPos=view.root().mapFromItem(view.findByObjectName("artistHero"),0,0);
+                    assertTrue("artist hero scrolls off the screen",((Number)heroPos.get("y")).floatValue()<0);
+                    snapshot(view,player,settings,compositor,"artist-scrolled-390",0);
+                    prop(artistScroll,"contentY").set(0f);settle(view);
                     click(view,view.findByObjectName("artistAlbumFilterButton"));settle(view);
                     assertTrue(view.findByObjectName("artistAlbumFilterSheet").visible.peek());
                     snapshot(view,player,settings,compositor,"artist-filters-390",0);

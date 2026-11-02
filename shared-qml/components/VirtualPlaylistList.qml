@@ -146,54 +146,55 @@ Flickable {
         cachedLayout: true
 
         Repeater {
-            model: view.list
-            windowStart: view.first
-            windowCount: view.window
+            model: view.window
             PlaylistListRow {
+                id: pooledPlaylist
+                property int sourceIndex: view.first + ((index - view.first % Math.max(1, view.window) + Math.max(1, view.window)) % Math.max(1, view.window))
+                property var entry: view.list && sourceIndex < view.count ? view.list[sourceIndex] : null
                 objectName: "virtualPlaylistListRow"
                 height: view.rowH
                 width: view.width
-                y: index * view.rowH + (view._dragFrom >= 0 ? reorderShift : 0)
-                playlistId: modelData.id
-                rowName: modelData.name
-                rowSubtitle: modelData.trackCount > 0
-                             ? i18n.t("common.songCount", modelData.trackCount)
+                y: pooledPlaylist.sourceIndex * view.rowH + (view._dragFrom >= 0 ? reorderShift : 0)
+                playlistId: pooledPlaylist.entry.id
+                rowName: pooledPlaylist.entry.name
+                rowSubtitle: pooledPlaylist.entry.trackCount > 0
+                             ? i18n.t("common.songCount", pooledPlaylist.entry.trackCount)
                              : i18n.t("common.songCountEmpty")
-                coverUrl: modelData.coverUrl || ""
-                coverThumbPath: modelData.coverThumbPath || ""
-                deletable: !!modelData.deletable
-                subscribed: !!modelData.subscribed
-                visible: view._dragFrom !== index
+                coverUrl: pooledPlaylist.entry.coverUrl || ""
+                coverThumbPath: pooledPlaylist.entry.coverThumbPath || ""
+                deletable: !!pooledPlaylist.entry.deletable
+                subscribed: !!pooledPlaylist.entry.subscribed
+                visible: view._dragFrom !== pooledPlaylist.sourceIndex
                 reorderable: view.reorderable
-                controlsRevealed: view.reorderable ? (view.revealedIndex === index) : true
-                onRevealToggled: view.revealedIndex = (view.revealedIndex === index) ? -1 : index
+                controlsRevealed: view.reorderable ? (view.revealedIndex === pooledPlaylist.sourceIndex) : true
+                onRevealToggled: view.revealedIndex = (view.revealedIndex === pooledPlaylist.sourceIndex) ? -1 : pooledPlaylist.sourceIndex
                 reorderShift: {
                     if (view._dragFrom < 0 || view._dropIndex < 0) return 0
                     if (view._dragFrom < view._dropIndex) {
-                        return (index > view._dragFrom && index <= view._dropIndex)
+                        return (pooledPlaylist.sourceIndex > view._dragFrom && pooledPlaylist.sourceIndex <= view._dropIndex)
                                ? -view.rowH : 0
                     }
                     if (view._dragFrom > view._dropIndex) {
-                        return (index >= view._dropIndex && index < view._dragFrom)
+                        return (pooledPlaylist.sourceIndex >= view._dropIndex && pooledPlaylist.sourceIndex < view._dragFrom)
                                ? view.rowH : 0
                     }
                     return 0
                 }
-                onActivated: { view.pendingPlaylist = modelData; view.openPlaylist() }
+                onActivated: { view.pendingPlaylist = pooledPlaylist.entry; view.openPlaylist() }
                 onDeleteRequested: {
-                    view.pendingPlaylist = modelData
+                    view.pendingPlaylist = pooledPlaylist.entry
                     view.deletePlaylistRequested()
                 }
                 onUnsubscribeRequested: {
-                    view.pendingPlaylist = modelData
+                    view.pendingPlaylist = pooledPlaylist.entry
                     view.unsubscribePlaylistRequested()
                 }
                 onReorderPressed: {
-                    view._dragFrom = index
-                    view._dragIdentity = "" + modelData.id
-                    view._dropIndex = index
+                    view._dragFrom = pooledPlaylist.sourceIndex
+                    view._dragIdentity = "" + pooledPlaylist.entry.id
+                    view._dropIndex = pooledPlaylist.sourceIndex
                     view._dragGrabOffset = reorderGrabOffset
-                    view._dragFloatY = index * view.rowH
+                    view._dragFloatY = pooledPlaylist.sourceIndex * view.rowH
                     view._dragViewportY = reorderContentY - view.viewportY
                     view._dragLastActivityMs = Date.now()
                 }

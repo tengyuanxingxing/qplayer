@@ -21,6 +21,30 @@ public class ReleaseUpdateCheckerTest {
     private static final String RELEASE_PAGE =
             "https://github.com/TIMER-err/qplayer/releases/tag/v1.9.3";
 
+    @Test public void customChannelIncludesPrereleasesAndSkipsDraftsIncompleteAndWrongVariants() throws Exception {
+        String catalog="["+customRelease("1.9.13",false,false,"release.apk")+","
+                +customRelease("1.9.14",true,true,"qplayer-1.9.14-custom-debug.apk")+","
+                +customRelease("1.9.12",false,true,"qplayer-1.9.12-custom-debug.apk")+","
+                +customRelease("1.9.11",false,true,"qplayer-1.9.11-custom-debug.apk")+"]";
+        List<String> requests=new ArrayList<>();
+        ReleaseUpdateChecker checker=new ReleaseUpdateChecker(url->{requests.add(url);return catalog;});
+        ReleaseUpdateChecker.Update update=checker.check("1.9.11-custom-debug",false,null).get();
+        assertEquals("1.9.12-custom",update.version());
+        assertTrue(update.assetUrl().endsWith("qplayer-1.9.12-custom-debug.apk"));
+        assertEquals("https://api.github.com/repos/tengyuanxingxing/qplayer/releases?per_page=30",requests.get(0));
+        assertFalse(checker.check("1.9.12-custom-debug",false,null).isPresent());
+    }
+    @Test public void emptyCustomCatalogMeansNoUpdate() throws Exception {
+        assertFalse(new ReleaseUpdateChecker(url->"[]").check("1.9.12-custom-debug",false,null).isPresent());
+    }
+    private static String customRelease(String version,boolean draft,boolean prerelease,String asset) {
+        com.google.gson.JsonObject obj=new com.google.gson.JsonObject();
+        obj.addProperty("tag_name","v"+version+"-custom");obj.addProperty("draft",draft);obj.addProperty("prerelease",prerelease);
+        com.google.gson.JsonObject file=new com.google.gson.JsonObject();file.addProperty("name",asset);
+        file.addProperty("browser_download_url","https://github.com/tengyuanxingxing/qplayer/releases/download/v"+version+"-custom/"+asset);
+        com.google.gson.JsonArray assets=new com.google.gson.JsonArray();assets.add(file);obj.add("assets",assets);return obj.toString();
+    }
+
     @Test
     public void aHigherPatchReleaseIsNewer() {
         assertTrue(ReleaseUpdateChecker.isNewer("1.8.1", "1.8.0"));

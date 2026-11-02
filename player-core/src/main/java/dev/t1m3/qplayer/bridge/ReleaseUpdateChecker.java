@@ -25,6 +25,10 @@ import java.util.function.Predicate;
 public final class ReleaseUpdateChecker {
     private static final String RELEASE_API =
             "https://api.github.com/repos/TIMER-err/qplayer/releases/latest";
+    private static final String CUSTOM_RELEASE_API =
+            "https://api.github.com/repos/tengyuanxingxing/qplayer/releases?per_page=30";
+    private static final Predicate<String> CUSTOM_APK_MATCHER =
+            name -> name.toLowerCase(Locale.ROOT).endsWith("-custom-debug.apk");
     private static final Predicate<String> APK_MATCHER =
             name -> name.toLowerCase(Locale.ROOT).endsWith(".apk");
 
@@ -117,12 +121,14 @@ public final class ReleaseUpdateChecker {
         if (currentVersion == null || currentVersion.isEmpty()) {
             throw new IllegalStateException("current version is unset");
         }
-        JsonObject release = fetchRelease(preferMirror);
+        boolean custom = currentVersion.contains("-custom");
+        JsonObject release = fetchRelease(preferMirror, custom);
+        if (release == null) return Optional.empty();
         String tag = optString(release, "tag_name");
         String latest = tag.startsWith("v") ? tag.substring(1) : tag;
         if (!isNewer(latest, currentVersion)) return Optional.empty();
 
-        Predicate<String> matcher = assetMatcher != null ? assetMatcher : APK_MATCHER;
+        Predicate<String> matcher = assetMatcher != null ? assetMatcher : (custom ? CUSTOM_APK_MATCHER : APK_MATCHER);
         String assetUrl = "";
         if (release.has("assets") && release.get("assets").isJsonArray()) {
             for (JsonElement element : release.getAsJsonArray("assets")) {
@@ -139,12 +145,13 @@ public final class ReleaseUpdateChecker {
     }
 
     /** An invalid successful response must fall back just like a failed request. */
-    private JsonObject fetchRelease(boolean preferMirror) throws IOException {
+    private JsonObject fetchRelease(boolean preferMirror, boolean custom) throws IOException {
         IOException last = null;
-        for (String url : GitHubDownloadUrls.apiCandidates(RELEASE_API, preferMirror)) {
+        for (String url : GitHubDownloadUrls.apiCandidates(custom ? CUSTOM_RELEASE_API : RELEASE_API, preferMirror)) {
             checkCancelled();
             try {
-                return parseReleaseObject(transport.get(url));
+                String json = transport.get(url);
+                return custom ? parseCustomReleases(json) : parseReleaseObject(json);
             } catch (IOException e) {
                 last = e;
             } catch (RuntimeException e) {
@@ -153,6 +160,38 @@ public final class ReleaseUpdateChecker {
         }
         checkCancelled();
         throw last != null ? last : new IOException("release lookup has no candidates");
+    }
+
+    /** Custom builds are prereleases; GitHub's /latest deliberately omits them. */
+    static JsonObject parseCustomReleases(String json) throws IOException {
+        JsonElement root;
+        try { root = JsonParser.parseString(json); }
+        catch (RuntimeException e) { throw new IOException("release JSON is invalid", e); }
+        if (root == null || !root.isJsonArray()) throw new IOException("release response is not a list");
+        JsonObject best = null;
+        for (JsonElement entry : root.getAsJsonArray()) {
+            if (!entry.isJsonObject()) continue;
+            JsonObject release = entry.getAsJsonObject();
+            String tag = optString(release, "tag_name");
+            if (!tag.matches("v[0-9]+\\.[0-9]+\\.[0-9]+-custom")) continue;
+            if (release.has("draft") && release.get("draft").getAsBoolean()) continue;
+            boolean ready = false;
+            if (release.has("assets") && release.get("assets").isJsonArray()) {
+                for (JsonElement element : release.getAsJsonArray("assets")) {
+                    if (!element.isJsonObject()) continue;
+                    JsonObject asset = element.getAsJsonObject();
+                    String url = optString(asset, "browser_download_url");
+                    // A draft/partial upload must never offer an incompatible or absent APK.
+                    if (CUSTOM_APK_MATCHER.test(optString(asset, "name")) && url.startsWith(
+                            "https://github.com/tengyuanxingxing/qplayer/releases/download/" + tag + "/")) {
+                        ready = true;
+                        break;
+                    }
+                }
+            }
+            if (ready && (best == null || isNewer(tag.substring(1), optString(best, "tag_name").substring(1)))) best = release;
+        }
+        return best;
     }
 
     /** Require a GitHub release object with a non-empty tag_name. */

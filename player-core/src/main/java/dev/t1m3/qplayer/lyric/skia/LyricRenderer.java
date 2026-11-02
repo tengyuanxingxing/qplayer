@@ -485,6 +485,7 @@ public class LyricRenderer {
     }
 
     private final LyricHitRegions hitRegions = new LyricHitRegions();
+    public boolean userScrolling() { return userScroll.isActive(); }
 
     public void render(Canvas canvas, float leftX, float topY,
                        float columnWidth, float columnHeight, long positionMs) {
@@ -518,8 +519,8 @@ public class LyricRenderer {
         // (carries current value/velocity into the new tuning — no snap).
         boolean spring = Boolean.TRUE.equals(cfg.springPhysics.getValue());
         boolean scaleOn = Boolean.TRUE.equals(cfg.scaleEmphasis.getValue());
-        boolean glowOn = Boolean.TRUE.equals(cfg.glow.getValue());
-        boolean shadowOn = Boolean.TRUE.equals(cfg.dropShadow.getValue());
+        boolean glowOn = !userScroll.isActive() && Boolean.TRUE.equals(cfg.glow.getValue());
+        boolean shadowOn = !userScroll.isActive() && Boolean.TRUE.equals(cfg.dropShadow.getValue());
         int springMode = spring ? 1 : 0;
         if (springMode != lastSpringMode) {
             // scrollAnim only drives the non-spring fallback; per-line springs

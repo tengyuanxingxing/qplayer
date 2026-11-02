@@ -11,6 +11,8 @@ import "."
 // it fades in lockstep with the host layer.
 Item {
     id: overlay
+    clip: true
+    readonly property real pagePosition: player.playbackPagePosition
     signal closeRequested()
 
     // Landscape (wide) layout: cover + transport on the left, lyrics on the right
@@ -81,14 +83,11 @@ Item {
         // Big centred art for no-lyric / instrumental tracks. On the lyrics↔cover switch
         // it ZOOMS + FADES (SPlayer's zoom transition) — no big/small morph. Kept
         // rendering while fading out so the zoom-out plays over the appearing lyrics.
-        visible: !overlay.landscape && ((overlay.coverOnly && player.playbackPage !== 0) || opacity > 0.01)
-        property real coverSize: Math.max(96, Math.min(overlay.width - 56, overlay.height - overlay.topPad - 368, 420))
-        width: coverSize
-        height: coverSize
-        anchors.horizontalCenter: parent.horizontalCenter
-        y: overlay.topPad + 88
-        anchors.horizontalCenterOffset: shown ? 0 : -overlay.width
-        Behavior on anchors.horizontalCenterOffset { NumberAnimation { duration: 280; easing.type: Easing.OutCubic } }
+        visible: !overlay.landscape && Math.abs(overlay.pagePosition-1)<1
+        property real coverSize: Math.max(96,Math.min(overlay.width-56,overlay.height-overlay.topPad-420,420))
+        width:coverSize;height:coverSize
+        x:(overlay.width-width)/2+(1-overlay.pagePosition)*overlay.width
+        y:overlay.topPad+88
         radius: Math.min(width, height) * 0.045
         iconSize: 72
         fadeIn: true
@@ -100,7 +99,7 @@ Item {
         // once is what janks in this engine (no dirty-rect rendering — every
         // animating subtree fully repaints every frame), not either one alone, so
         // drop this one until both Behaviors below have actually reached their target.
-        layer.enabled: visible && opacity >= 0.999 && baseScale >= 0.999 && !pCover.vinyl
+        layer.enabled: visible && Math.abs(overlay.pagePosition-1)<0.001 && !player.playbackDragging && !pCover.vinyl
         layer.effect: MultiEffect {
             shadowEnabled: true
             shadowColor: "#CC000000"
@@ -113,21 +112,8 @@ Item {
         // switch coverPath clears to "" until the new art is ready, so the placeholder
         // shows through (fadeIn) instead of the previous song's cover lingering.
         source: player.coverPath
-        // Zoom + fade in step with the host lyric column's own zoom (SPlayer's whole-
-        // content zoom): cover grows in as the lyrics shrink out, and vice versa.
-        property bool shown: overlay.coverOnly && player.playbackPage !== 0 && player.lyricSlide > 0.25
-        opacity: shown ? 1 : 0
-        baseScale: shown ? 1 : 0.95
-        Behavior on opacity { NumberAnimation { duration: 250; easing.type: Easing.OutCubic } }
-        Behavior on baseScale { NumberAnimation { duration: 300; easing.type: Easing.OutBack } }
-
-        // Tap the cover to switch back to lyrics. A no-op when lyricsCoverOnly (no
-        // lyrics for this track) is what's actually forcing cover view — there's
-        // nothing to switch back to, so coverOnly just stays true either way.
-        MouseArea {
-            anchors.fill: parent
-            onClicked: {}
-        }
+        opacity:1
+        baseScale:1
     }
 
     Row {
@@ -140,17 +126,6 @@ Item {
         Rectangle { width: player.playbackPage === 2 ? 14 : 5; height: 5; radius: 3; color: player.playbackPage === 2 ? "#EEFFFFFF" : "#55FFFFFF" }
 
     }
-    IconButton {
-        visible: !overlay.landscape && player.playbackPage !== 0
-        anchors.right: parent.right; anchors.rightMargin: 22
-        y: titleText.y - 8
-        width: 56; height: 56; iconSize: 36
-        icon: player.currentLiked ? "favorite" : "favorite_border"
-        contentColor: player.currentLiked ? "#FFFF5277" : "#CCFFFFFF"
-        enabled: player.currentLikeable
-        onClicked: player.toggleLike()
-    }
-
     // --- top: dismiss + title + artist ---------------------------------
     IconButton {
         id: backBtn
@@ -188,29 +163,11 @@ Item {
         onClicked: { overlay.fontPanelOpen = false; overlay.offsetPanelOpen = !overlay.offsetPanelOpen }
     }
 
-    // Switch to cover view (issue #15: quick lyrics<->cover switching).
-    // Hidden once already in cover view — tap the cover itself to come back. Same
-    // top row as offsetBtn, to its left — NOT stacked below (offsetPanel drops down
-    // from there and would overlap a button placed underneath).
-    IconButton {
-        id: coverModeBtn
-        objectName: "lyricCoverModeBtn"
-        visible: true
-        anchors.top: parent.top
-        anchors.topMargin: overlay.topPad
-        anchors.right: offsetBtn.left
-        anchors.rightMargin: 6
-        type: "standard"
-        icon: overlay.coverOnly ? "lyrics" : "image"
-        contentColor: "#FFFFFFFF"
-        onClicked: player.setCoverMode(player.playbackPage !== 1)
-    }
-
     IconButton {
         id: fontSizeBtn
         objectName: "lyricFontSizeButton"
         anchors.top: parent.top; anchors.topMargin: overlay.topPad
-        anchors.right: coverModeBtn.left; anchors.rightMargin: 6
+        anchors.right: offsetBtn.left; anchors.rightMargin: 52
         icon: "text_fields"; contentColor: "#FFFFFFFF"
         onClicked: { overlay.offsetPanelOpen = false; overlay.fontPanelOpen = !overlay.fontPanelOpen }
     }
@@ -225,7 +182,7 @@ Item {
     }
 
     // Full-width layout: a way of looking at this page, so it is toggled here
-    // rather than from the settings list. Same top row, left of the cover switch.
+    // rather than from the settings list. Same top row, left of the font-size control.
     // Only where the layout exists at all: a window wider than it is tall, on a
     // host that has the setting (desktop — settings.has is false on Android).
     IconButton {
@@ -390,51 +347,39 @@ Item {
         }
     }
 
-    MarqueeText {
-        id: titleText
-        visible: !overlay.landscape && player.playbackPage !== 0 && player.playbackPage !== 0
-        y: overlay.coverOnly ? pCover.y + pCover.height + 32 : overlay.topPad + 54
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: 28
-        anchors.rightMargin: 88
-        text: player.title
-        textColor: "#FFFFFFFF"
-        fontFamily: Theme.typography.titleLarge.family
-        fontSize: 24 + overlay.textSize * 4
-        fontWeight: Font.DemiBold
+    PlaybackPortraitHeader {
+        objectName:"coverPortraitHeader"
+        x:(1-overlay.pagePosition)*overlay.width;y:pCover.y+pCover.height+22
+        width:overlay.width;textSize:overlay.textSize
+        visible:!overlay.landscape && Math.abs(overlay.pagePosition-1)<1
     }
-    MarqueeText {
-        id: artistText
-        visible: !overlay.landscape && player.playbackPage !== 0
-        anchors.top: titleText.bottom
-        anchors.topMargin: 4
-        anchors.left: parent.left
-        anchors.right: parent.right
-        anchors.leftMargin: 28
-        anchors.rightMargin: 28
-        text: player.artist
-        textColor: "#B3FFFFFF"
-        fontSize: 14 + overlay.textSize * 2
+    PlaybackPortraitHeader {
+        x:(2-overlay.pagePosition)*overlay.width;y:overlay.topPad+54
+        width:overlay.width;textSize:overlay.textSize
+        visible:!overlay.landscape && overlay.pagePosition>1
     }
-    // Jump to the artist's page. Main.qml's page stack keeps the lyric route
-    // underneath and closes its separately-rendered host layer while the artist
-    // route is current; Back therefore returns here instead of losing context.
-    // Disabled (no pointer/tap) for local/custom tracks, which have no provider
-    // artist identity to open.
-    MouseArea {
-        anchors.fill: artistText
-        enabled: player.playingArtistIdsCsv !== "" || player.playingArtistId !== 0
-        hoverEnabled: enabled
-        cursorShape: Qt.PointingHandCursor
-        onClicked: player.openPlayingArtist()
-    }
-
     // --- bottom: transport (portrait) ---------------------------------
     PlaybackInfoPage {
-        anchors.fill: parent
-        visible: !overlay.landscape && player.playbackPage === 0
-        enabled: visible
+        x:-overlay.pagePosition*overlay.width
+        width:overlay.width;height:overlay.height
+        visible:!overlay.landscape && overlay.pagePosition<1
+        enabled:visible
+    }
+    Text {
+        objectName:"coverLyricPreview"
+        x:28+(1-overlay.pagePosition)*overlay.width
+        y:overlay.height-settings.bottomInset-224;width:overlay.width-56;height:44
+        visible:!overlay.landscape && Math.abs(overlay.pagePosition-1)<1
+        text:player.currentLyricText
+        font.pixelSize:14+overlay.textSize*2;color:"#CCFFFFFF";elide:Text.ElideRight
+    }
+    IconButton {
+        objectName:"coverCommentsEntry"
+        anchors.top:parent.top;anchors.topMargin:overlay.topPad
+        anchors.right:offsetBtn.left;anchors.rightMargin:6
+        visible:!overlay.landscape && player.playbackPage===1
+        icon:"chat_bubble_outline";contentColor:"white"
+        onClicked:player.openCurrentComments()
     }
     PortraitPlaybackTransport { visible: !overlay.landscape }
 
@@ -695,7 +640,10 @@ Item {
     ToastStack {
         id: lyricSnack
         z: 100
-    }    SongCommentsOverlay {
+    }
+    PlaybackArtistPicker { anchors.fill:parent;z:90;visible:player.songArtistPickerOpen && player.lyricsOpen }
+
+    SongCommentsOverlay {
         anchors.fill: parent
         visible: player.commentsOpen
         enabled: visible
