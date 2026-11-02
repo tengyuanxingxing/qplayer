@@ -98,6 +98,7 @@ public final class QPlayerActivity extends Activity {
     /** The content root (glView's FrameLayout parent), used to force the window
      *  insets to re-dispatch after the system bars are hidden/shown. */
     private android.view.View rootView;
+    private android.widget.TextView frameStatsHud;
     private Consumer<Boolean> lyricsOpenListener;
     private Consumer<Boolean> systemBarsListener;
     private BroadcastReceiver debugReceiver;
@@ -347,6 +348,31 @@ public final class QPlayerActivity extends Activity {
         root.addView(glView, 0, new android.widget.FrameLayout.LayoutParams(
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT,
                 android.view.ViewGroup.LayoutParams.MATCH_PARENT));
+        frameStatsHud = new android.widget.TextView(this);
+        frameStatsHud.setTextSize(11);
+        frameStatsHud.setTextColor(0xFFFFFFFF);
+        frameStatsHud.setBackgroundColor(0xCC182226);
+        frameStatsHud.setPadding(8,5,8,5);
+        frameStatsHud.setText("滑动时测量帧率…");
+        frameStatsHud.setClickable(false);
+        frameStatsHud.setFocusable(false);
+        frameStatsHud.setImportantForAccessibility(android.view.View.IMPORTANT_FOR_ACCESSIBILITY_NO);
+        android.widget.FrameLayout.LayoutParams hudParams = new android.widget.FrameLayout.LayoutParams(
+                android.view.ViewGroup.LayoutParams.WRAP_CONTENT,android.view.ViewGroup.LayoutParams.WRAP_CONTENT,
+                android.view.Gravity.TOP|android.view.Gravity.END);
+        hudParams.topMargin = (int)(56*density);hudParams.rightMargin=(int)(6*density);
+        root.addView(frameStatsHud,hudParams);
+        Consumer<Object> statsChanged = value -> runOnUiThread(() -> {
+            if (destroyed || frameStatsHud == null || glView == null) return;
+            boolean enabled = Boolean.TRUE.equals(value);
+            frameStatsHud.setVisibility(enabled ? android.view.View.VISIBLE : android.view.View.GONE);
+            frameStatsHud.setText("滑动时测量帧率…");
+            glView.setFrameStatsListener(enabled ? line -> runOnUiThread(() -> {
+                if (!destroyed && frameStatsHud != null) frameStatsHud.setText(line);
+            }) : null);
+        });
+        registerSettingsHook(SettingsCatalog.FRAME_STATS_KEY,statsChanged);
+        statsChanged.accept(settings.bool(SettingsCatalog.FRAME_STATS_KEY));
         if (splashView != null) splashView.bringToFront();
         glView.setSplashListener(new QmlGLSurfaceView.SplashListener() {
             @Override public void onReady() {
@@ -1218,6 +1244,7 @@ public final class QPlayerActivity extends Activity {
         }
         if (!isChangingConfigurations()) retireUnclaimedEngine(initializing);
         if (glView != null) {
+            glView.setFrameStatsListener(null);
             glView.dispose();
             glView = null;
         }
@@ -1249,6 +1276,7 @@ public final class QPlayerActivity extends Activity {
             controller.setExitListener(null);
         }
         rootView = null;
+        frameStatsHud = null;
         reader = null;
         super.onDestroy();
     }

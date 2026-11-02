@@ -43,6 +43,7 @@ public final class SettingsCatalog {
     public static final String LOCAL = "local";
     public static final String PLUGINS = "plugins";
     public static final String ABOUT = "about";
+    public static final String FRAME_STATS_KEY = "showFrameStats";
 
     public static final List<String> CATEGORIES = Collections.unmodifiableList(
             Arrays.asList(APPEARANCE, PAGES, PLAYBACK, LYRIC, OVERLAY_LYRIC, DESKTOP_LYRIC,
@@ -554,6 +555,8 @@ public final class SettingsCatalog {
                 .build());
 
         // ---- 关于 -----------------------------------------------------------
+        out.add(SettingSpec.toggle(FRAME_STATS_KEY, ABOUT, "settings.frameStats.title", false)
+                .desc("settings.frameStats.desc").onlyOn(ANDROID).group("performance").build());
         // GitHub mirror used to sit under 播放 even though it only accelerates
         // app/plugin downloads — next to 检查更新 is where people look for it.
         out.add(SettingSpec.toggle("mirror", ABOUT, "settings.mirror.title",

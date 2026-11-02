@@ -73,6 +73,16 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private static final int WAKE_SETTLE_FRAMES = 2;
     private final AtomicInteger wakeSettleFrames = new AtomicInteger();
     private final Runnable renderWake = this::wakeRenderer;
+    private final DisplayFrameScheduler frameScheduler = new DisplayFrameScheduler();
+    private final VsyncFramePump framePump = new VsyncFramePump(frameScheduler, this::requestRender);
+    private final HighRefreshController highRefresh = new HighRefreshController(this);
+    private final FrameTimingStats timingStats = new FrameTimingStats();
+    private volatile java.util.function.Consumer<String> frameStatsListener;
+    private long lastAnimationNanos;
+
+    public void setFrameStatsListener(java.util.function.Consumer<String> listener) {
+        frameStatsListener = listener;
+    }
 
     /** One-shot ready signal on the GL thread after the first painted frame. */
     public interface SplashListener {
@@ -145,7 +155,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         // Canvas/fluid GPU caches first, so they rebuild cleanly on resume.
         setPreserveEGLContextOnPause(false);
         setRenderer(new GlRenderer());
-        setRenderMode(RENDERMODE_CONTINUOUSLY);
+        setRenderMode(RENDERMODE_WHEN_DIRTY);
         setFocusable(true);
         setFocusableInTouchMode(true);
     }
@@ -154,6 +164,8 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     public void onPause() {
         cancelTouchStream();
         pauseRequested = true;
+        framePump.pause();
+        highRefresh.pause();
         liquidGlassTilt.onPause();
         // GLSurfaceView.onPause() waits indefinitely for the render thread. Let
         // initial scene construction finish before asking that thread to pause.
@@ -180,6 +192,8 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         if (disposed) return;
         pauseRequested = false;
         liquidGlassTilt.onResume();
+        framePump.resume();
+        highRefresh.resume();
         if (glThreadPaused) {
             super.onResume();
             glThreadPaused = false;
@@ -194,6 +208,8 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     public void dispose() {
         if (disposed) return;
         disposed = true;
+        framePump.dispose();
+        highRefresh.dispose();
         liquidGlassTilt.dispose();
         runOnGlThreadAndWait(this::releaseSceneResources);
     }
@@ -310,6 +326,17 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     @Override public void onWindowFocusChanged(boolean focused) {
         super.onWindowFocusChanged(focused);
         if (!focused && compositor != null) cancelTouchStream();
+        if (highRefresh != null) highRefresh.refresh();
+    }
+
+    @Override protected void onAttachedToWindow() {
+        super.onAttachedToWindow();
+        if (!pauseRequested && !disposed) { highRefresh.resume(); framePump.resume(); }
+    }
+    @Override protected void onDetachedFromWindow() {
+        highRefresh.pause();
+        framePump.pause();
+        super.onDetachedFromWindow();
     }
 
     @Override
@@ -512,8 +539,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
      *  or Back (which do post() and wake). */
     private void wakeRenderer() {
         wakeSettleFrames.updateAndGet(current -> Math.max(current, WAKE_SETTLE_FRAMES));
-        setRenderMode(RENDERMODE_CONTINUOUSLY);
-        requestRender();
+        framePump.wake();
     }
 
     private boolean consumeWakeSettleFrame() {
@@ -728,7 +754,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         private void surfaceChanged(int width, int height) {
             if (failed || disposed || surface == null) return;
             surface.resize(width, height);
-            requestSmoothFrameRate();
+            highRefresh.refresh();
             try {
                 if (view == null) {
                     view = bundle.configure(QmlView.withStockTypes(engine), resources);
@@ -796,10 +822,13 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             synchronized (QmlRuntimeLock.MONITOR) {
                 dq.install();
                 try {
+                long frameGeneration = framePump.beginFrame();
                 long t0 = System.nanoTime();
                 long v0 = Property.changeVersion();
                 if (controller != null) controller.pump();
-                view.tickAnimations(System.nanoTime());
+                long pulse = frameScheduler.frameTimeNanos;
+                lastAnimationNanos = Math.max(lastAnimationNanos, pulse > 0 ? pulse : t0);
+                view.tickAnimations(lastAnimationNanos);
                 dq.flush();
                 long frameChanges = Property.changeVersion() - v0;
                 profBumpTick += frameChanges;
@@ -826,11 +855,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                             && controller.lyricSlide.peek() > 0.001)));
                 boolean needContinuous = AndroidRenderPolicy.shouldRenderContinuously(
                         hostAnimation, frameChanges > 0, consumeWakeSettleFrame(), view.root());
-                if (!needContinuous && compositor.skippedLayout()) {
-                    setRenderMode(RENDERMODE_WHEN_DIRTY);
-                } else {
-                    setRenderMode(RENDERMODE_CONTINUOUSLY);
-                }
+                framePump.rendered(frameGeneration, needContinuous || !compositor.skippedLayout());
                 if (!readyFired) {
                     readyFired = true;
                     SplashListener l = splashListener;
@@ -863,6 +888,15 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private double profLayoutMs, profRenderMs, profPresentMs, profGapMs, profMaxGapMs;
 
     private void profileFrame(long t0, long t1, long t1b, long t2) {
+        FrameTimingStats.Sample sample = timingStats.frame(t2,t2-t0);
+        if (sample != null) {
+            String line = String.format(java.util.Locale.ROOT,
+                    "系统 %.0fHz · 绘制 %.0fFPS\n请求 %.0fHz · 帧间隔P95 %.1fms · 工作 %.1fms",
+                    highRefresh.displayHz,sample.fps,highRefresh.requestedHz,sample.p95Ms,sample.workMs);
+            java.util.function.Consumer<String> listener = frameStatsListener;
+            if (listener != null) listener.accept(line);
+            android.util.Log.i("qplayer.refresh",line.replace('\n',' '));
+        }
         profLayoutMs += (t1 - t0) / 1_000_000.0;
         profRenderMs += (t1b - t1) / 1_000_000.0;
         profPresentMs += (t2 - t1b) / 1_000_000.0;
@@ -899,31 +933,11 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
         return Math.round(v * 10.0) / 10.0;
     }
 
-    /** Let Android schedule this surface at a supported high refresh rate. This
-     * is a frame-pacing hint, not a promise that rendering meets that budget. */
-    private void requestSmoothFrameRate() {
-        if (android.os.Build.VERSION.SDK_INT < 30) return;
-        try {
-            android.view.Display display = getDisplay();
-            if (display == null) return;
-            android.view.Display.Mode current = display.getMode();
-            float rate = current.getRefreshRate();
-            for (android.view.Display.Mode mode : display.getSupportedModes()) {
-                if (mode.getPhysicalWidth() == current.getPhysicalWidth()
-                        && mode.getPhysicalHeight() == current.getPhysicalHeight()
-                        && mode.getRefreshRate() > rate && mode.getRefreshRate() <= 120.1f)
-                    rate = mode.getRefreshRate();
-            }
-            getHolder().getSurface().setFrameRate(rate, android.view.Surface.FRAME_RATE_COMPATIBILITY_DEFAULT);
-        } catch (RuntimeException ignored) {
-            // Older vendor implementations can reject an otherwise valid hint.
-        }
-    }
-
     // First QML load/render failure: stop the loop (so it doesn't crash-spin),
     // dump the trace to a file we can pull, and hand it to the host to display.
     private void reportError(Throwable t) {
         if (failed) return;
+        framePump.dispose();
         ErrorListener l = errorListener;
         disposed = true;
         liquidGlassTilt.setActive(false);
