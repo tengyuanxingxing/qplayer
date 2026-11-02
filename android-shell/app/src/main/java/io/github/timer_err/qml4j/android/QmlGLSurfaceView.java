@@ -95,6 +95,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
     private long lyTapTime;
     private boolean lyCanScroll;
     private boolean lyInfoGesture;
+    private boolean lyCoverGesture;
     private boolean lyInfoCanceled;
     private boolean lyPortrait;
     private final dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture pageGesture = new dev.t1m3.qplayer.lyric.skia.PlaybackPageGesture();
@@ -405,6 +406,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 lyCanScroll = compositor.lyricsScrollable(x, y, gl.width() / uiScale, gl.height() / uiScale, insetTop());
                 lyTapTime = lyCanScroll ? compositor.lyricRenderer().timeAtPoint(x, y) : -1L;
                 lyInfoGesture = controller != null && controller.playbackPage.peek() != 2;
+                lyCoverGesture = controller != null && controller.playbackPage.peek() == 1;
                 lyInfoCanceled = false;
                 if (lyInfoGesture) view.dispatchPointerDown(x, y, eventTimeNanos);
                 pageGesture.begin(x, y);
@@ -435,6 +437,9 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
                 if (lyPortrait && pageGesture.direction() == 2 && controller != null) {
                     compositor.lyricRenderer().scrollCancel();
                     controller.finishPlaybackDrag(swipe);
+                } else if (lyCoverGesture && controller != null && pageGesture.dismissDown(x, y)) {
+                    view.dispatchPointerCancel();
+                    controller.setLyricsOpen(false);
                 } else if (lyInfoGesture) {
                     if (!lyInfoCanceled) view.dispatchPointerUp(x, y, eventTimeNanos);
                 } else if (lyMoved) {
@@ -458,7 +463,7 @@ public final class QmlGLSurfaceView extends GLSurfaceView {
             if (lyPortrait && direction == 2 && controller != null)
                 controller.updatePlaybackDrag((x - lyDownX) / Math.max(1f, getWidth() / uiScale));
             if (lyInfoGesture) {
-                if (direction == 2) { if (!lyInfoCanceled) view.dispatchPointerCancel(); lyInfoCanceled = true; }
+                if (direction == 2 || (lyCoverGesture && direction == 1)) { if (!lyInfoCanceled) view.dispatchPointerCancel(); lyInfoCanceled = true; }
                 else view.dispatchPointerMove(x, y, eventTimeNanos);
                 return;
             }

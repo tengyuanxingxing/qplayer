@@ -590,7 +590,7 @@ function squareDto(entry) {
   };
 }
 
-function home(args) {
+function homePlaylists(args) {
   var limit = Number(args.limit || 12);
   return requireUin().then(function (uin) {
     if (!uin) return null;
@@ -625,6 +625,35 @@ function home(args) {
       return { songs: [], playlists: list.slice(0, limit) };
     });
   });
+}
+
+/** QQ 客户端的猜你喜欢 / 个性电台；沿用 musicu 的 Cookie、authst 与续期。 */
+function guessSongs(limit) {
+  return musicu({guess: {
+    module: "music.radioProxy.MbTrackRadioSvr", method: "get_radio_track",
+    param: {id:99, num:Math.min(30, Math.max(1, limit)), from:0, scene:0,
+      song_ids:[], ext:{bluetooth:""}, should_count_down:1}
+  }}, ANDROID_COMM).then(function (body) {
+    var node = body.guess || {};
+    if (Number(node.code || 0) !== 0) return [];
+    var data = node.data || {}, tracks = data.tracks || [];
+    var seen = {};
+    return songsOf(tracks, function (row) {
+      return row.track_info || row.songInfo || row.song_info || row;
+    }).filter(function (song) {
+      if (seen[song.id]) return false;
+      seen[song.id] = true; return true;
+    }).slice(0, limit);
+  });
+}
+
+function home(args) {
+  var limit = Math.min(30, Math.max(1, Number(args.limit || 12)));
+  // 歌曲和歌单分别加载：歌单接口异常不能吞掉已成功返回的电台歌曲。
+  return Promise.all([
+    guessSongs(limit).catch(function () { return []; }),
+    homePlaylists(args).catch(function () { return {playlists:[]}; })
+  ]).then(function (both) { return {songs:both[0], playlists:both[1].playlists || []}; });
 }
 
 /** 一页歌单详情。第二页起只要歌曲,省掉重复的 dirinfo/标签。 */

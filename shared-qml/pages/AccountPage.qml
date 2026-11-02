@@ -12,6 +12,7 @@ import "../dialogs"
 // md3 Card is fixed-size.
 Rectangle {
     id: page
+    objectName: "sourceAccountPage"
     property real bottomContentInset: 0
     signal back()
     signal home()
@@ -200,12 +201,16 @@ Rectangle {
                     font.weight: Font.DemiBold
                 }
 
+                Item {
+                    id: sourceRows
+                    Layout.fillWidth: true
+                    Layout.preferredHeight: (player.sourceAccounts || []).length * 88
                 Repeater {
                     model: player.sourceAccounts || null
                     delegate: Rectangle {
-                        Layout.fillWidth: true
-                        Layout.leftMargin: 12
-                        Layout.rightMargin: 12
+                        objectName: "sourceAccountRow"
+                        property string providerId: modelData.providerId
+                        x:12;y:index*88;width:sourceRows.width-24;height:76
                         radius: 20
                         color: Theme.color.surfaceContainer
                         implicitHeight: 76
@@ -279,6 +284,7 @@ Rectangle {
 
                         IconButton {
                             id: sourceGear
+                            objectName: "sourceAccountGear"
                             anchors.right: parent.right
                             anchors.rightMargin: 8
                             anchors.verticalCenter: parent.verticalCenter
@@ -309,6 +315,7 @@ Rectangle {
                             }
                         }
                     }
+                }
                 }
 
                 // --- stats ---------------------------------------------

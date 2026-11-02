@@ -7,6 +7,7 @@ import miuix.Core
 // Cookie-header fallback. Network and credential persistence stay off-render.
 Item {
     id: dialog
+    objectName: "sourceLoginDialog"
 
     property bool active: false
     property int loginMode: 0 // 0 QR, 1 official website, 2 pasted Cookie, 3 app
@@ -15,34 +16,41 @@ Item {
     property var successRevision: player.webLoginSuccessRevision
     signal closed()
 
-    function startCurrentMode() {
-        if (!player.pluginLoginActive) return;
-        if (loginMode === 0) {
-            ready = false;
-            player.startQrLogin();
-            revealTimer.restart();
-        } else if (loginMode === 3) {
-            player.startAppLogin();
-        }
+    function modeAvailable(mode) {
+        if (!player.loginMetadataReady) return false
+        if (mode === 0) return player.pluginQrLoginAvailable
+        if (mode === 1) return player.webLoginAvailable
+        if (mode === 2) return player.pluginCredentialLoginAvailable
+        if (mode === 3) return player.pluginAppLoginAvailable
+        return false
     }
-
+    function startCurrentMode() {
+        if (!player.pluginLoginActive || !dialog.modeAvailable(loginMode)) return
+        if (loginMode === 0) {
+            ready=false;player.startQrLogin();revealTimer.restart()
+        } else if (loginMode === 3) player.startAppLogin()
+    }
+    function selectDefaultMode() {
+        if (!dialog.active || !player.loginMetadataReady) return
+        var next=player.pluginAppLoginAvailable?3:player.pluginQrLoginAvailable?0:
+                 player.webLoginAvailable?1:player.pluginCredentialLoginAvailable?2:-1
+        var same=loginMode===next
+        loginMode=next
+        if(same) dialog.startCurrentMode()
+    }
+    property var metadataRevision: player.loginMetadataRevision
+    onMetadataRevisionChanged: dialog.selectDefaultMode()
+    property bool metadataLoading: player.loginMetadataLoading
+    onMetadataLoadingChanged: if(metadataLoading) {loginMode=-1;ready=false;cookieText=""}
     onActiveChanged: {
         if (active) {
-            player.clearWebLoginError();
-            var next = player.pluginAppLoginAvailable ? 3
-                        : (player.pluginLoginActive && !player.pluginQrLoginAvailable
-                           ? (player.webLoginAvailable ? 1 : 2) : 0);
-            cookieText = "";
-            ready = false;
-            if (loginMode === next) dialog.startCurrentMode();
-            else loginMode = next;
-            revealTimer.restart();
-            loginSheet.open();
-        } else if (loginSheet.opened) loginSheet.close();
+            player.clearWebLoginError();cookieText="";ready=false;loginMode=-1
+            loginSheet.open();dialog.selectDefaultMode()
+        } else if (loginSheet.opened) loginSheet.close()
     }
     onLoginModeChanged: {
-        player.clearWebLoginError();
-        if (active) dialog.startCurrentMode();
+        player.clearWebLoginError()
+        if(active) dialog.startCurrentMode()
     }
     onSuccessRevisionChanged: if (active) dialog.closed()
 
@@ -109,8 +117,22 @@ Item {
                 fontSize: 14
             }
 
+            Text {
+                objectName: "loginMetadataStatus"
+                Layout.fillWidth:true
+                visible:player.pluginLoginActive && !player.loginMetadataReady
+                text:player.loginMetadataLoading?"正在获取登录方式…":player.webLoginError
+                wrapMode:Text.Wrap;horizontalAlignment:Text.AlignHCenter
+                color:Theme.color.onSurfaceVariantColor;font.pixelSize:14
+            }
+            Button {
+                Layout.alignment:Qt.AlignHCenter
+                visible:player.pluginLoginActive && !player.loginMetadataReady && !player.loginMetadataLoading
+                text:"重新获取登录方式";onClicked:player.retryLoginMetadata()
+            }
             TabRowWithContour {
-                visible: player.pluginLoginActive
+                objectName: "sourceLoginModes"
+                visible: player.pluginLoginActive && player.loginMetadataReady
                 Layout.fillWidth: true
                 equalWidth: false
                 selectOnClick: false
@@ -131,13 +153,13 @@ Item {
                     return out
                 }
                 selectedTabIndex: modes.indexOf(dialog.loginMode)
-                onTabSelected: (index) => dialog.loginMode = modes[index]
+                onTabSelected: (index) => { var mode=modes[index];if(dialog.modeAvailable(mode))dialog.loginMode=mode }
             }
 
             Column {
                 Layout.fillWidth: true
                 width: parent.width
-                visible: player.pluginLoginActive && dialog.loginMode === 0
+                visible: player.pluginLoginActive && player.loginMetadataReady && dialog.loginMode === 0
 
                     spacing: 12
 
@@ -227,7 +249,7 @@ Item {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                visible: player.pluginLoginActive && dialog.loginMode === 3
+                visible: player.pluginLoginActive && player.loginMetadataReady && dialog.loginMode === 3
 
                     spacing: 16
                     Text {
@@ -268,7 +290,7 @@ Item {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                visible: player.pluginLoginActive && dialog.loginMode === 1
+                visible: player.pluginLoginActive && player.loginMetadataReady && dialog.loginMode === 1
 
                     spacing: 16
                     Text {
@@ -301,7 +323,7 @@ Item {
 
             ColumnLayout {
                 Layout.fillWidth: true
-                visible: player.pluginLoginActive && dialog.loginMode === 2
+                visible: player.pluginLoginActive && player.loginMetadataReady && dialog.loginMode === 2
 
                     spacing: 12
                     Text {

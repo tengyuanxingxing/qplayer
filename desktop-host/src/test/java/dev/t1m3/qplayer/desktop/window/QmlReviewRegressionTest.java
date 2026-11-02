@@ -487,6 +487,93 @@ public class QmlReviewRegressionTest {
         return (Property<Object>) item.getClass().getField(name).get(item);
     }
 
+    @Test public void accountGearsDoNotOverlapAndTargetTheirOwnProvider() throws Exception {
+        for (String target : new String[]{"qq", "netease", "soda"}) {
+            try (Scene scene = new Scene(temporary.newFolder().toPath())) {
+                java.util.List<SourceAccountRow> rows = new java.util.ArrayList<>();
+                for (String id : new String[]{"qq", "netease", "soda"}) {
+                    SourceAccountRow row = new SourceAccountRow(); row.providerId=id; row.sourceName=id; rows.add(row);
+                }
+                scene.player.sourceAccounts.set(rows);
+                scene.load("import QtQuick\nimport \"pages\"\nAccountPage { width:480; height:806 }");
+                java.util.List<Item> rendered = named(scene.view.root(), "sourceAccountRow");
+                assertEquals(3,rendered.size());
+                for(int i=0;i<3;i++) {
+                    Item row=rendered.get(i); assertEquals(i*88,row.y.peekFloat(),0.1);
+                    assertEquals(rows.get(i).providerId,property(row,"providerId").peek());
+                    if(target.equals(rows.get(i).providerId)) {
+                        Item gear=named(row,"sourceAccountGear").get(0);
+                        scene.click(gear,gear.width.peekFloat()/2,gear.height.peekFloat()/2);scene.frames(3);
+                        SourceAccountRow chosen=(SourceAccountRow)property(scene.view.root(),"menuRow").peek();
+                        assertEquals(target,chosen.providerId);
+                    }
+                }
+            }
+        }
+    }
+
+    @Test public void loginDialogDropsOldAppModeWhileNewSourceMetadataLoads() throws Exception {
+        try (Scene scene = new Scene(temporary.newFolder().toPath())) {
+            scene.player.pluginLoginActive.set(true);scene.player.loginMetadataReady.set(true);
+            scene.player.pluginAppLoginAvailable.set(true);scene.player.loginProviderName.set("QQ");
+            scene.load("import QtQuick\nimport \"dialogs\"\nItem { LoginDialog { active:true } }");
+            Item dialog=scene.view.findByObjectName("sourceLoginDialog");
+            assertEquals(3,property(dialog,"loginMode").peekInt());
+            scene.player.loginMetadataReady.set(false);scene.player.loginMetadataLoading.set(true);
+            scene.player.pluginAppLoginAvailable.set(false);scene.frames(4);
+            assertEquals(-1,property(dialog,"loginMode").peekInt());
+            scene.player.loginProviderName.set("汽水");scene.player.pluginQrLoginAvailable.set(true);
+            scene.player.pluginCredentialLoginAvailable.set(true);scene.player.loginMetadataLoading.set(false);
+            scene.player.loginMetadataReady.set(true);scene.player.loginMetadataRevision.set(1L);scene.frames(4);
+            assertEquals("Soda cannot retain QQ App login mode",0,property(dialog,"loginMode").peekInt());
+            assertEquals("",scene.player.webLoginError.peek());
+        }
+    }
+
+    @Test public void miniPlayerGapsCannotActivateCoveredSongs() throws Exception {
+        try (Scene scene = new Scene(temporary.newFolder().toPath())) {
+            scene.load("""
+                import QtQuick
+                import "components"
+                Item { id: root; property int behind:0; property int opened:0
+                    MouseArea { anchors.fill:parent; onClicked:root.behind++ }
+                    MiniPlayer { objectName:"testMini"; x:12;y:200;width:440;height:80;z:1000
+                        onLyricsRequested:root.opened++
+                    }
+                }
+                """);
+            Item mini=scene.view.findByObjectName("testMini");
+            scene.click(mini,5,75);scene.frames(2);
+            assertEquals(0,scene.number("behind"));assertEquals(1,scene.number("opened"));
+            scene.click(mini,220,1);scene.frames(2);
+            assertEquals(0,scene.number("behind"));assertEquals(2,scene.number("opened"));
+            int mode=scene.player.playMode.peek();
+            Item play=scene.view.findByObjectName("miniPlayerPlayButton");
+            scene.click(play,play.width.peekFloat()/2,play.height.peekFloat()/2);scene.frames(2);
+            assertEquals("transport has its own action",2,scene.number("opened"));assertEquals(mode,scene.player.playMode.peek().intValue());
+        }
+    }
+
+    @Test public void draggingThePlayerHeaderDownClosesItWithoutTreatingHorizontalMovementAsDismiss() throws Exception {
+        try (Scene scene = new Scene(temporary.newFolder().toPath())) {
+            scene.player.lyricsOpen.set(true);scene.player.lyricSlide.set(1.0);
+            scene.load("import QtQuick\nimport \"components\"\nItem { LyricOverlay { anchors.fill:parent; onCloseRequested:player.setLyricsOpen(false) } }");
+            DirtyQueue q=scene.view.dirtyQueue();q.install();
+            try {
+                scene.view.dispatchPointerDown(160,30);scene.view.dispatchPointerMove(270,35);scene.view.dispatchPointerUp(270,35);q.flush();
+                assertTrue(scene.player.lyricsOpen.peek());
+                scene.view.dispatchPointerDown(160,30);scene.view.dispatchPointerMove(164,80);scene.view.dispatchPointerMove(168,145);scene.view.dispatchPointerUp(168,145);q.flush();
+                assertFalse("header swipe collapses player",scene.player.lyricsOpen.peek());
+            } finally {q.uninstall();}
+        }
+    }
+
+    private static java.util.List<Item> named(Item parent,String name) {
+        java.util.List<Item> result=new java.util.ArrayList<>();
+        if(name.equals(parent.objectName.peek()))result.add(parent);
+        for(Item child:parent.children)result.addAll(named(child,name));return result;
+    }
+
     private static final class Scene implements AutoCloseable {
         final String oldBase = AppDirs.base();
         final String oldCache = AppDirs.cacheBase();

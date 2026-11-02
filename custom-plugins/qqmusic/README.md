@@ -17,7 +17,7 @@ QPlayer 核心之外。
 | `songDetails` | 按 songmid 获取详情 |
 | `playlistDetails` | 歌单详情与曲目，分页拉取，私密歌单需登录 |
 | `artistDetails` / `albumDetails` | 歌手与专辑详情 |
-| `home` | 推荐歌单，登录后使用 `PlaylistSquare/GetRecommendFeed` |
+| `home` | QQ 猜你喜欢 / 个性电台歌曲（`get_radio_track`）与推荐歌单；沿用当前 QQ 登录，歌曲和歌单独立加载 |
 | `userPlaylists` | 自建歌单（含「我喜欢」）与收藏的歌单 |
 | `like` | 「我喜欢」的读取与增删 |
 | `playlistMutation` | 新建/删除歌单、增删歌曲、收藏/取消收藏歌单 |

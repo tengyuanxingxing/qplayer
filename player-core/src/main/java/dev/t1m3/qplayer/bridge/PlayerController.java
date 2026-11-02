@@ -613,6 +613,11 @@ public final class PlayerController {
     public final Property<List<NeteasePlaylist>> recommendPlaylists = new Property<>(Collections.<NeteasePlaylist>emptyList());
     public final Property<List<Song>> sourceRecommendations =
             new Property<>(Collections.<Song>emptyList());
+    /** QQ personal radio is independent of whichever provider supplies the playlist grid. */
+    public final Property<List<Song>> qqGuessSongs = new Property<>(Collections.<Song>emptyList());
+    public final Property<String> qqGuessStatus = new Property<>("正在加载 QQ 音乐猜你喜欢…");
+    private final AtomicLong qqGuessGeneration = new AtomicLong();
+
     public final Property<List<Playlist>> sourceRecommendPlaylists =
             new Property<>(Collections.<Playlist>emptyList());
     /** Titled playlist groups the source wants drawn above the plain grid, e.g.
@@ -902,6 +907,12 @@ public final class PlayerController {
     public final Property<String> loginProviderName =
             new Property<>(I18n.tr("login.defaultProvider"));
     public final Property<Boolean> pluginLoginActive = new Property<>(false);
+    public final Property<String> loginProviderId = new Property<>("");
+    public final Property<Boolean> loginMetadataLoading = new Property<>(false);
+    public final Property<Boolean> loginMetadataReady = new Property<>(false);
+    public final Property<Long> loginMetadataRevision = new Property<>(0L);
+    private volatile String explicitLoginProvider = "";
+    private final AtomicLong loginAttemptGeneration = new AtomicLong();
     public final Property<List<LoginMethod>> loginMethods =
             new Property<>(Collections.<LoginMethod>emptyList());
     public final Property<Boolean> pluginQrLoginAvailable = new Property<>(false);
@@ -1307,6 +1318,7 @@ public final class PlayerController {
             for (PluginManifest manifest : pluginManager.enabledProviders()) {
                 if (!manifest.id.equals(providerId)) continue;
                 if (!manifest.capabilitySet().contains(ProviderCapability.LOGIN)) return false;
+                explicitLoginProvider = providerId;
                 publishLoginMetadata(manifest);
                 return true;
             }
@@ -2492,7 +2504,20 @@ public final class PlayerController {
                 break;
             }
         }
+        if (!explicitLoginProvider.isEmpty()) {
+            for (PluginManifest manifest : pluginManager.enabledProviders()) {
+                if (explicitLoginProvider.equals(manifest.id)
+                        && manifest.capabilitySet().contains(ProviderCapability.LOGIN)) {
+                    if (selected != null) refreshPluginAccount(selected.id, null);
+                    return;
+                }
+            }
+            explicitLoginProvider = "";
+        }
         if (selected == null) {
+            loginMetadataGeneration.incrementAndGet();
+            resetLoginSurface();
+            loginProviderId.set("");
             pendingPluginLoginProvider = "";
             pluginQrMethodId = "";
             pluginWebMethodId = "";
@@ -2528,6 +2553,9 @@ public final class PlayerController {
      */
     private void publishLoginMetadata(PluginManifest provider) {
         final long generation = loginMetadataGeneration.incrementAndGet();
+        resetLoginSurface();
+        loginProviderId.set(provider.id);
+        loginMetadataLoading.set(true);
         loginProviderName.set(provider.name);
         pluginLoginActive.set(true);
         // Claim the login provider before the metadata round trip: restoring a stored
@@ -2535,9 +2563,12 @@ public final class PlayerController {
         pendingPluginLoginProvider = provider.id;
         pluginAccounts.methods(provider.id, hostPlatform).whenComplete((methods, error) -> post(() -> {
             // Another source claimed the login surface while this was in flight.
-            if (generation != loginMetadataGeneration.get()) return;
+            if (generation != loginMetadataGeneration.get()
+                    || !provider.id.equals(pendingPluginLoginProvider)) return;
             if (error != null) {
                 Logger.warn("plugin {} login metadata failed: {}", provider.id, safeMessage(error));
+                loginMetadataLoading.set(false);
+                webLoginError.set("无法获取登录方式，请重试");
                 return;
             }
             LoginMethod qr = null, web = null, credential = null, app = null;
@@ -2576,9 +2607,34 @@ public final class PlayerController {
                 loginAppButtonLabel.set(I18n.tr("login.app.open"));
                 loginAppInstructions.set(I18n.tr("login.app.instructions"));
             }
+            loginMetadataLoading.set(false);
+            loginMetadataReady.set(true);
+            loginMetadataRevision.set(loginMetadataRevision.peek() + 1L);
             migrateLegacyCredentialsIfAvailable(provider.id);
         }));
     }
+
+    /** Clear the preceding provider before its replacement is queried asynchronously. */
+    private void resetLoginSurface() {
+        loginAttemptGeneration.incrementAndGet();
+        stopLoginPoll();
+        pendingPluginLoginChallenge="";pendingUnikey=null;pendingLoginIsApp=false;
+        pluginQrMethodId="";pluginAppMethodId="";pluginWebMethodId="";pluginCredentialMethodId="";
+        activeWebLoginMethod=null;
+        loginMetadataReady.set(false);loginMetadataLoading.set(false);
+        loginMethods.set(Collections.<LoginMethod>emptyList());
+        pluginQrLoginAvailable.set(false);pluginAppLoginAvailable.set(false);
+        pluginCredentialLoginAvailable.set(false);webLoginAvailable.set(false);
+        loginAppLabel.set("");loginAppButtonLabel.set(I18n.tr("login.app.open"));
+        loginAppInstructions.set(I18n.tr("login.app.instructions"));
+        loginWebInstructions.set(I18n.tr("login.web.instructions"));
+        loginCredentialInstructions.set(I18n.tr("login.credential.instructions"));
+        loginCredentialLabel.set(I18n.tr("login.credential.label"));
+        publishAppLink("", "");qrImage.set(Collections.<List<Boolean>>emptyList());qrImagePath.set("");
+        qrStatus.set(0);qrStatusMessage.set("");webLoginError.set("");webLoginBusy.set(false);
+    }
+
+    public void retryLoginMetadata() { beginSourceLogin(loginProviderId.peek()); }
 
     private void migrateLegacyCredentialsIfAvailable(String provider) {
         if (legacyCredentialMigrationAttempted || !"netease".equals(provider)
@@ -3070,9 +3126,7 @@ public final class PlayerController {
         synchronized (QmlRuntimeLock.MONITOR) {
             this.webLoginLauncher = launcher;
             webLoginAvailable.set(
-                    launcher != null
-                            && (pendingPluginLoginProvider.isEmpty()
-                                    || !pluginWebMethodId.isEmpty()));
+                    launcher != null && !pluginWebMethodId.isEmpty());
         }
     }
 
@@ -8116,6 +8170,18 @@ public final class PlayerController {
         }
     }
 
+    private void publishQqGuess(ProviderHome home, Throwable error, long generation) {
+        if (generation != qqGuessGeneration.get()) return;
+        List<Song> songs = home != null ? home.songs : Collections.<Song>emptyList();
+        qqGuessSongs.set(Collections.unmodifiableList(new ArrayList<>(songs)));
+        qqGuessStatus.set(error != null ? "QQ 推荐加载失败，点刷新重试"
+                : songs.isEmpty() ? "QQ 暂未返回推荐，请检查 QQ 登录后刷新" : "来自 QQ 音乐猜你喜欢");
+    }
+
+    public void playQqGuess(int index) {
+        synchronized (QmlRuntimeLock.MONITOR) { playPluginSongList(qqGuessSongs.peek(), index); }
+    }
+
     public void loadHome() {
         synchronized (QmlRuntimeLock.MONITOR) {
             post(() -> homeLoading.set(true));
@@ -8124,6 +8190,18 @@ public final class PlayerController {
             final long generation = homeGeneration.incrementAndGet();
             homeRequested = true;
             PluginManifest provider = primaryProviderWith(ProviderCapability.HOME);
+            final long guessGeneration = qqGuessGeneration.incrementAndGet();
+            boolean hasQq = pluginManager.enabledProviders().stream()
+                    .anyMatch(source -> "qq".equals(source.id) && source.capabilities.contains(ProviderCapability.HOME.wireName()));
+            if (!hasQq) {
+                qqGuessSongs.set(Collections.<Song>emptyList());
+                qqGuessStatus.set("安装并启用 QQ 音乐插件后可获取猜你喜欢");
+            } else {
+                qqGuessStatus.set("正在加载 QQ 音乐猜你喜欢…");
+                if (provider == null || !"qq".equals(provider.id))
+                    pluginProviders.home("qq", homePlaylistLimit).whenComplete((home, error) ->
+                            post(() -> publishQqGuess(home, error, guessGeneration)));
+            }
             if (provider != null) {
                 pluginProviders
                         .home(provider.id, homePlaylistLimit)
@@ -8136,6 +8214,7 @@ public final class PlayerController {
                                                             pluginRegistry.primaryProvider()))
                                                         return;
                                                     homeLoading.set(false);
+                                                    if ("qq".equals(provider.id)) publishQqGuess(home, error, guessGeneration);
                                                     if (error != null) {
                                                         Logger.warn(
                                                                 "plugin {} home failed: {}",
@@ -9968,6 +10047,8 @@ public final class PlayerController {
     /** Shell callback when its browser window is closed before obtaining MUSIC_U. */
     public void cancelWebLogin() {
         synchronized (QmlRuntimeLock.MONITOR) {
+            loginAttemptGeneration.incrementAndGet();
+            explicitLoginProvider = "";
             stopLoginPoll();
             pendingPluginLoginChallenge = "";
             pendingUnikey = null;
@@ -9998,6 +10079,8 @@ public final class PlayerController {
 
     private void importLoginCookie(String cookieHeader, String pluginMethodId) {
         final String candidate = cookieHeader == null ? "" : cookieHeader;
+        final String provider = pendingPluginLoginProvider;
+        final long attempt = loginAttemptGeneration.incrementAndGet();
         if (!pendingPluginLoginProvider.isEmpty()
                 && pluginMethodId != null
                 && !pluginMethodId.isEmpty()) {
@@ -10007,6 +10090,8 @@ public final class PlayerController {
                             (challenge, error) ->
                                     post(
                                             () -> {
+                                                if (attempt != loginAttemptGeneration.get()
+                                                        || !provider.equals(pendingPluginLoginProvider)) return;
                                                 if (error != null) {
                                                     webLoginBusy.set(false);
                                                     webLoginError.set(safeMessage(error));
@@ -10028,6 +10113,9 @@ public final class PlayerController {
     /** Mint a login key + matrix off-thread; publishes to {@link #qrImage}/{@link #qrStatus}. */
     public void startQrLogin() {
         synchronized (QmlRuntimeLock.MONITOR) {
+            if (!Boolean.TRUE.equals(loginMetadataReady.peek()) || pluginQrMethodId.isEmpty()) return;
+            final long attempt = loginAttemptGeneration.incrementAndGet();
+            stopLoginPoll();pendingPluginLoginChallenge="";
             pendingLoginIsApp = false;
             post(
                     () -> {
@@ -10044,7 +10132,8 @@ public final class PlayerController {
                                 (challenge, error) ->
                                         post(
                                                 () -> {
-                                                    if (!provider.equals(pendingPluginLoginProvider)
+                                                    if (attempt != loginAttemptGeneration.get()
+                                                            || !provider.equals(pendingPluginLoginProvider)
                                                             || pendingLoginIsApp) return;
                                                     if (error != null) {
                                                         Logger.warn(
@@ -10075,10 +10164,13 @@ public final class PlayerController {
     /** Begin an {@code app} login challenge. The OS jump happens on {@link #openLoginApp()}. */
     public void startAppLogin() {
         synchronized (QmlRuntimeLock.MONITOR) {
-            if (pluginAppMethodId.isEmpty() || pendingPluginLoginProvider.isEmpty()) {
+            if (!Boolean.TRUE.equals(loginMetadataReady.peek())
+                    || pluginAppMethodId.isEmpty() || pendingPluginLoginProvider.isEmpty()) {
                 webLoginError.set(I18n.tr("login.error.noApp"));
                 return;
             }
+            final long attempt = loginAttemptGeneration.incrementAndGet();
+            stopLoginPoll();pendingPluginLoginChallenge="";
             pendingLoginIsApp = true;
             post(
                     () -> {
@@ -10094,7 +10186,8 @@ public final class PlayerController {
                             (challenge, error) ->
                                     post(
                                             () -> {
-                                                if (!provider.equals(pendingPluginLoginProvider)
+                                                if (attempt != loginAttemptGeneration.get()
+                                                        || !provider.equals(pendingPluginLoginProvider)
                                                         || !pendingLoginIsApp) return;
                                                 if (error != null) {
                                                     Logger.warn(
@@ -10152,6 +10245,7 @@ public final class PlayerController {
             if (!pendingPluginLoginProvider.isEmpty() && !pendingPluginLoginChallenge.isEmpty()) {
                 final String provider = pendingPluginLoginProvider;
                 final String challenge = pendingPluginLoginChallenge;
+                final long attempt = loginAttemptGeneration.get();
                 pluginAccounts
                         .poll(provider, challenge)
                         .whenComplete(
@@ -10159,7 +10253,8 @@ public final class PlayerController {
                                     try {
                                         post(
                                                 () -> {
-                                                    if (!provider.equals(pendingPluginLoginProvider)
+                                                    if (attempt != loginAttemptGeneration.get()
+                                                            || !provider.equals(pendingPluginLoginProvider)
                                                             || !challenge.equals(
                                                                     pendingPluginLoginChallenge))
                                                         return;

@@ -23,9 +23,15 @@ import androidx.core.app.NotificationCompat;
 import androidx.media.session.MediaButtonReceiver;
 
 import dev.t1m3.qplayer.bridge.PlayerController;
+import dev.t1m3.qplayer.qml.QmlRuntimeLock;
 import dev.t1m3.qplayer.bridge.PlaybackSnapshot;
 import dev.t1m3.qplayer.i18n.I18n;
 import dev.t1m3.qplayer.util.Logger;
+import dev.t1m3.qplayer.lyric.LyricLine;
+import dev.t1m3.qplayer.lyric.skia.LyricConfig;
+import dev.t1m3.qplayer.lyric.LockScreenLyrics;
+import java.util.List;
+import java.util.function.Consumer;
 import io.github.timer_err.qml4j.android.R;
 
 import java.util.concurrent.Executors;
@@ -69,6 +75,43 @@ public final class PlaybackService extends Service {
     private LyriconBridge lyricon;
     private final android.os.Handler main = new android.os.Handler(android.os.Looper.getMainLooper());
     private boolean stopping;
+    private PlayerController lyricController;
+    private List<LyricLine> publishedLyricLines;
+    private String publishedLyricKey = "", publishedLyricInfo = "";
+    private long publishedLyricOffset;
+    private final Consumer<List<LyricLine>> lockScreenLyricListener = ignored -> onControllerChanged();
+    private final Consumer<Integer> lockScreenOffsetListener = ignored -> onControllerChanged();
+
+    private void bindLockScreenLyrics(PlayerController next) {
+        if (lyricController == next) return;
+        if (lyricController != null) {
+            lyricController.lyrics.removeListener(lockScreenLyricListener);
+            lyricController.lyricOffsetMs.removeListener(lockScreenOffsetListener);
+        }
+        lyricController = next;
+        publishedLyricLines = null;
+        publishedLyricKey = "";
+        publishedLyricInfo = "";
+        if (next != null) {
+            next.lyrics.addListener(lockScreenLyricListener);
+            next.lyricOffsetMs.addListener(lockScreenOffsetListener);
+        }
+    }
+
+    private String lockScreenLyrics(PlayerController c, PlaybackSnapshot.TrackMetadata track) {
+        List<LyricLine> lines = c.lyrics.peek();
+        String key = track.canonicalId() + "\n" + track.title() + "\n" + track.artist() + "\n" + track.album();
+        long offset = LyricConfig.instance.offsetMs.getValue();
+        if (lines != publishedLyricLines || !key.equals(publishedLyricKey) || offset != publishedLyricOffset) {
+            publishedLyricInfo = LockScreenLyrics.encode(track.canonicalId(), track.title(),
+                    track.artist(), track.album(), lines, offset);
+            publishedLyricLines = lines;
+            publishedLyricKey = key;
+            publishedLyricOffset = offset;
+        }
+        return publishedLyricInfo;
+    }
+
     private boolean taskRemoved;
     private PlaybackSnapshot.Artwork artworkVersion;
     private ArtworkData artworkData;
@@ -154,6 +197,7 @@ public final class PlaybackService extends Service {
         PlayerController c = controller;
         if (c != null) {
             c.setPlaybackListener(selfListener);
+            bindLockScreenLyrics(c);
             lyricon.bind(c);
         }
         androidx.core.content.ContextCompat.registerReceiver(this, noisyReceiver,
@@ -185,6 +229,7 @@ public final class PlaybackService extends Service {
         PlayerController c = controller;
         if (c != null) {
             c.setPlaybackListener(selfListener);
+            bindLockScreenLyrics(c);
             if (lyricon != null) lyricon.bind(c);
         }
         try {
@@ -206,6 +251,7 @@ public final class PlaybackService extends Service {
         // swiped away (stopWithTask="true") or explicitly stopped.
         if (instance == this) instance = null;
         stopping = true;
+        bindLockScreenLyrics(null);
         artworkGeneration++;
         artworkVersion = null;
         artworkData = null;
@@ -250,7 +296,13 @@ public final class PlaybackService extends Service {
         bootstrapListener = bootstrap;
         PlaybackService live = instance;
         c.setPlaybackListener(live != null ? live.selfListener : bootstrap);
-        if (live != null && live.lyricon != null) live.lyricon.bind(c);
+        if (live != null) {
+            live.main.post(() -> { if (controller == c && !live.stopping) {
+                live.bindLockScreenLyrics(c);
+                if (live.lyricon != null) live.lyricon.bind(c);
+                live.onControllerChanged();
+            }});
+        }
     }
 
     /** Do not keep an idle, shut-down controller rooted by the Service class. */
@@ -282,6 +334,7 @@ public final class PlaybackService extends Service {
     public void onTaskRemoved(Intent rootIntent) {
         stopping = true;
         taskRemoved = true;
+        bindLockScreenLyrics(null);
         PlayerController c = controller;
         if (c != null) {
             // See onDestroy(): capture position/queue/playMode before pausing.
@@ -320,7 +373,12 @@ public final class PlaybackService extends Service {
         if (stopping) return;
         PlayerController c = controller;
         if (c == null) return;
-        PlaybackSnapshot snapshot = c.playbackSnapshot();
+        PlaybackSnapshot snapshot;
+        String lyricInfo;
+        synchronized (QmlRuntimeLock.MONITOR) {
+            snapshot = c.playbackSnapshot();
+            lyricInfo = snapshot.track() != null ? lockScreenLyrics(c, snapshot.track()) : "";
+        }
         PlaybackSnapshot.TrackMetadata t = snapshot.track();
         boolean playing = snapshot.playing();
         long pos = snapshot.positionMs();
@@ -329,6 +387,8 @@ public final class PlaybackService extends Service {
         MediaMetadataCompat.Builder mb = new MediaMetadataCompat.Builder();
         Bitmap art = notificationArtwork(t != null ? t.artwork() : null);
         if (t != null) {
+            mb.putString(MediaMetadataCompat.METADATA_KEY_MEDIA_ID, t.canonicalId());
+            if (!lyricInfo.isEmpty()) mb.putString(LockScreenLyrics.METADATA_KEY, lyricInfo);
             mb.putString(MediaMetadataCompat.METADATA_KEY_TITLE, nz(t.title()));
             mb.putString(MediaMetadataCompat.METADATA_KEY_ARTIST, nz(t.artist()));
             mb.putString(MediaMetadataCompat.METADATA_KEY_ALBUM, nz(t.album()));

@@ -808,6 +808,8 @@ Rectangle {
     MiniPlayer {
         objectName: "miniPlayer"
         id: mini
+        z:1000
+        enabled:!player.lyricsOpen && player.lyricSlide<=0.001
         anchors.left: rail.right
         anchors.right: parent.right
         anchors.leftMargin: app.floatingBottomChrome ? 24 : 12

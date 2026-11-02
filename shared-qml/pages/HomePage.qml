@@ -9,7 +9,7 @@ Item {
     property var pendingPlaylist
     signal openPlaylist()
     signal openSearch()
-    property var songs:player.sourceContentActive?player.sourceRecommendations:player.recommendations
+    property var songs:player.qqGuessSongs
     property var playlists:player.sourceContentActive?player.sourceRecommendPlaylists:player.recommendPlaylists
     property int playlistCount:playlists?playlists.length:0
     property int columns:Math.max(2,Math.floor(width/180))
@@ -35,7 +35,7 @@ Item {
         HomeSongSection {
             id:daily
             x:0;y:hero.y+hero.height+(hero.visible?30:0);width:scroll.width
-            title:"猜你喜欢";subtitle:"来自当前音源的推荐";songs:page.songs||[];kind:"home";pageActive:page.visible
+            title:"猜你喜欢";subtitle:player.qqGuessStatus;songs:page.songs||[];kind:"qq";pageActive:page.visible
         }
         HomeSongSection {
             id:hearts

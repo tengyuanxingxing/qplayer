@@ -17,5 +17,10 @@ public final class PlaybackPageGesture {
         return direction == HORIZONTAL && Math.abs(x - this.x) >= 48f
                 ? (x < this.x ? 1 : -1) : 0;
     }
+    /** Only header / cover owners may call this; vertical lyric and info scrolling stays local. */
+    public boolean dismissDown(float x, float y) {
+        move(x, y);
+        return direction == VERTICAL && y - this.y >= 72f && Math.abs(x - this.x) < (y - this.y) * 0.75f;
+    }
     public int direction() { return direction; }
 }

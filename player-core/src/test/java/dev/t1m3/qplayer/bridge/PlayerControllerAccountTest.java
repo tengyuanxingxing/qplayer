@@ -151,6 +151,33 @@ public class PlayerControllerAccountTest {
         assertEquals(Integer.valueOf(3), controller.userLevel.peek());
     }
 
+    @Test public void selectingAnotherProviderImmediatelyDropsThePreviousLoginModesAndIgnoresOldBegins() throws Exception {
+        install("qq", "return {loggedIn:false};", "[{id:'qq-app',type:'app',label:'QQ App'},{id:'qq-qr',type:'qr',label:'QQ QR'}]");
+        install("netease", "return {loggedIn:false};", "[{id:'ne-qr',type:'qr',label:'NE QR'}]");
+        install("soda", "return {loggedIn:false};", "[{id:'qr',type:'qr',label:'QR'},{id:'cookie',type:'credential',label:'Cookie'}]");
+        startController();controller.setAppLinkLauncher(url->true);
+        assertTrue(controller.beginSourceLogin("qq"));await(()->controller.loginMetadataReady.peek() && controller.pluginAppLoginAvailable.peek());
+        assertTrue(controller.beginSourceLogin("soda"));
+        assertEquals("soda",controller.loginProviderId.peek());assertFalse(controller.loginMetadataReady.peek());
+        assertFalse("QQ app mode cannot survive a switch to Soda",controller.pluginAppLoginAvailable.peek());
+        assertTrue(controller.loginMethods.peek().isEmpty());
+        await(()->controller.loginMetadataReady.peek());assertFalse(controller.pluginAppLoginAvailable.peek());assertTrue(controller.pluginQrLoginAvailable.peek());
+        assertTrue(controller.beginSourceLogin("netease"));await(()->controller.loginMetadataReady.peek());
+        assertEquals("netease",controller.loginProviderName.peek());assertFalse(controller.pluginAppLoginAvailable.peek());
+        controller.startQrLogin();controller.cancelWebLogin();controller.beginSourceLogin("netease");
+        await(()->controller.loginMetadataReady.peek());
+        assertTrue("a canceled QR callback cannot populate a re-opened dialog",controller.qrImage.peek().isEmpty());
+    }
+
+    @Test public void backgroundPrimaryMetadataCannotReplaceExplicitLoginProvider() throws Exception {
+        install("qq", "return {loggedIn:false};", "[{id:'qq-qr',type:'qr',label:'QQ QR'}]");
+        install("soda", "return {loggedIn:false};", "[{id:'qr',type:'qr',label:'QR'}]");
+        startController();controller.beginSourceLogin("soda");await(()->controller.loginMetadataReady.peek());
+        controller.setPrimarySourcePlugin("qq");controller.pump();
+        assertEquals("soda",controller.loginProviderId.peek());
+        assertEquals("soda",controller.loginProviderName.peek());
+    }
+
     private void startController() {
         controller = new PlayerController(new SilentBackend(), track -> {}, NeteaseClient.INSTANCE);
     }
@@ -194,7 +221,8 @@ public class PlayerControllerAccountTest {
         fail("timed out waiting for offline account state");
     }
 
-    private void install(String id, String accountBody) throws Exception {
+    private void install(String id, String accountBody) throws Exception {install(id,accountBody,"[]");}
+    private void install(String id, String accountBody, String methods) throws Exception {
         PluginManifest manifest = new PluginManifest();
         manifest.schemaVersion = 1;
         manifest.id = id;
@@ -206,7 +234,8 @@ public class PlayerControllerAccountTest {
         manifest.permissions.add("credentials");
         byte[] json = new Gson().toJson(manifest).getBytes(StandardCharsets.UTF_8);
         byte[] script = ("var calls = 0; var signedOut = false; module.exports = {handlers:{"
-                + "login: function(args) { if (args.operation === 'methods') return [];"
+                + "login: function(args) { if (args.operation === 'methods') return " + methods + ";"
+                + "if(args.operation === 'begin') return {id:'challenge',methodId:args.methodId,status:'waiting',qrContent:'fixture-"+id+"'};"
                 + "if (args.operation === 'logout') signedOut = true; return true; },"
                 + "account: function() { calls++; " + accountBody + " } }};")
                 .getBytes(StandardCharsets.UTF_8);

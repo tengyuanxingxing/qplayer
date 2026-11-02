@@ -2,6 +2,12 @@ package dev.t1m3.qplayer.lyric.skia;
 import org.junit.Test;
 import static org.junit.Assert.*;
 public class PlaybackPageGestureTest {
+    @Test public void downwardDismissNeedsVerticalIntentAndEnoughDistance() {
+        PlaybackPageGesture g=new PlaybackPageGesture(); g.begin(100,100);
+        assertFalse(g.dismissDown(103,140)); assertTrue(g.dismissDown(110,185));
+        g.begin(100,200); assertFalse(g.dismissDown(100,100));
+        g.begin(100,100); g.move(150,101); assertFalse(g.dismissDown(151,250));
+    }
     @Test public void horizontalSwipeLocksAndCannotTurnIntoAScrollOrTap() {
         PlaybackPageGesture g=new PlaybackPageGesture(); g.begin(200,200);
         assertEquals(PlaybackPageGesture.HORIZONTAL,g.move(170,202));

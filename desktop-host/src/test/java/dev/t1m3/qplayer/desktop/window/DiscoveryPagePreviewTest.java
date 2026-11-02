@@ -55,19 +55,19 @@ public class DiscoveryPagePreviewTest {
                     // entering Home legitimately initiates its first provider refresh.
                     for(int i=0;i<55;i++){view.tickAnimations(System.nanoTime()+1_000_000_000L);settle(view);Thread.sleep(8);}
                     assertEquals(0,prop(view.root(),"page").peekInt());
-                    player.sourceContentActive.set(true);player.sourceRecommendations.set(songs);player.heartExploreSongs.set(songs);
+                    player.sourceContentActive.set(true);player.qqGuessSongs.set(songs);player.qqGuessStatus.set("来自 QQ 音乐猜你喜欢 · 界面预览");player.heartExploreSongs.set(songs);
                     player.heartExploreReason.set("根据红心收藏中的歌手探索 · 预览数据");player.title.set("在路上");player.artist.set("示例音乐人");
                     player.playbackRelatedSongs.set(songs);player.coverPath.set(art.toString());player.coverSeed.set("#618AC0");
                     snapshot(view,player,settings,compositor,"home-390",0);
-                    assertEquals("source fixture survives home loading",12,player.sourceRecommendations.peek().size());
+                    assertEquals("source fixture survives home loading",12,player.qqGuessSongs.peek().size());
                     Item home=view.findByObjectName("homeDiscoveryPage");
                     Item section=view.findByObjectName("homeSongSection");
                     assertTrue("Home section enabled",Boolean.TRUE.equals(prop(section,"pageActive").peek()));
                     assertTrue("Home section renders actual song rows",hasSongRow(section));
-                    player.sourceRecommendations.set(new ArrayList<>());settle(view);
+                    player.qqGuessSongs.set(new ArrayList<>());settle(view);
                     assertTrue("empty recommendations collapse",section.height.peekFloat()<110);
                     snapshot(view,player,settings,compositor,"home-empty-390",0);
-                    player.sourceRecommendations.set(songs);settle(view);
+                    player.qqGuessSongs.set(songs);settle(view);
                     Item homeScroll=view.findByObjectName("homeRecommendationsScroll");assertNotNull(homeScroll);
                     prop(homeScroll,"contentY").set(600f);snapshot(view,player,settings,compositor,"home-hearts-390",0);
                     player.lyricsOpen.set(true);player.setCoverMode(true);player.swipePlaybackPage(-1);

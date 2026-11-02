@@ -58,6 +58,24 @@ public class PluginUpdateHomeRefreshTest {
         }
     }
 
+    @Test public void qqPersonalRadioIsIndependentOfPrimaryPlaylistProviderAndRefreshesAfterPluginUpdate() throws Exception {
+        String oldBase=AppDirs.base(),oldCache=AppDirs.cacheBase();PlayerController controller=null;
+        try {
+            Path base=temporaryFolder.newFolder("qq-home").toPath();AppDirs.setBase(base.toString());AppDirs.setCacheBase(base.resolve("cache").toString());
+            controller=new PlayerController(new SilentAudioBackend(),track->{},NeteaseClient.INSTANCE);
+            install(controller,packageFile("ne.qplug","1.0.0","NE","netease"),"1.0.0");
+            install(controller,packageFile("qq.qplug","1.0.0","QQ","qq"),"1.0.0");
+            PlayerController c=controller;c.setPrimarySourcePlugin("netease");c.loadHome();
+            awaitUi(c,()->!c.qqGuessSongs.peek().isEmpty());
+            assertEquals("qq:song:s1",c.qqGuessSongs.peek().get(0).id);
+            assertEquals("QQ",c.qqGuessSongs.peek().get(0).name);
+            assertEquals("NE",awaitPlaylistName(c,"NE"));
+            install(c,packageFile("qq-new.qplug","1.0.1","QQ new","qq"),"1.0.1");
+            c.loadHome();awaitUi(c,()->"QQ new".equals(c.qqGuessSongs.peek().get(0).name));
+            assertEquals("NE",c.sourceRecommendPlaylists.peek().get(0).name);
+        } finally {if(controller!=null)lifecycle.close(controller);AppDirs.setBase(oldBase);AppDirs.setCacheBase(oldCache);}
+    }
+
     @Test
     public void retirementCancelsQueuedEnableAndWaitsForRunningWorkerCleanup() throws Exception {
         String oldBase = AppDirs.base();
@@ -135,6 +153,7 @@ public class PluginUpdateHomeRefreshTest {
     /** Drive the real QML-facing install path: inspect, then confirm. */
     private static void install(PlayerController controller, Path archive, String version)
             throws Exception {
+        controller.pendingPluginVersion.set("");
         controller.inspectPluginPackage(archive.toString());
         awaitUi(controller, () -> version.equals(controller.pendingPluginVersion.peek()));
         controller.confirmPendingPluginInstall();
@@ -155,16 +174,20 @@ public class PluginUpdateHomeRefreshTest {
     }
 
     private Path packageFile(String name, String version, String playlistName) throws Exception {
+        return packageFile(name, version, playlistName, "fixture");
+    }
+
+    private Path packageFile(String name, String version, String playlistName, String id) throws Exception {
         PluginManifest manifest = new PluginManifest();
         manifest.schemaVersion = 1;
-        manifest.id = "fixture";
+        manifest.id = id;
         manifest.name = "Fixture";
         manifest.version = version;
         manifest.apiVersion = "1.0";
         manifest.capabilities.add("home");
         byte[] manifestBytes = new Gson().toJson(manifest).getBytes(StandardCharsets.UTF_8);
         byte[] scriptBytes = ("module.exports = { handlers: {\n"
-                + " home: function() { return { songs: [], sections: [],"
+                + " home: function() { return { songs: [{id:'s1',title:'"+playlistName+"'}], sections: [],"
                 + " playlists: [ { id: 'p1', name: '" + playlistName + "' } ] }; }\n"
                 + "} };\n").getBytes(StandardCharsets.UTF_8);
         Map<String, String> hashes = new LinkedHashMap<>();

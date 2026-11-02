@@ -14,6 +14,7 @@ Item {
     function play(index) {
         if (section.kind === "heart") player.playHeartExplore(index)
         else if (section.kind === "related") player.playPlaybackRelated(index)
+        else if (section.kind === "qq") player.playQqGuess(index)
         else player.playRecommendation(index)
     }
     Text {

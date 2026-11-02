@@ -71,7 +71,22 @@ Item {
     }
 
     // Swallow taps on the empty (lyrics) area so they don't leak through.
-    MouseArea { anchors.fill: parent }
+    MouseArea {
+        anchors.fill: parent
+        property real downX: 0
+        property real downY: 0
+        property bool dismissEligible: false
+        onPressed: (mouse) => {
+            downX = mouse.x; downY = mouse.y
+            dismissEligible = !overlay.landscape && (mouse.y < overlay.topPad + 54 || player.playbackPage === 1)
+        }
+        onReleased: (mouse) => {
+            if (dismissEligible && mouse.y - downY >= 72 && Math.abs(mouse.x - downX) < (mouse.y - downY) * 0.75)
+                overlay.closeRequested()
+            dismissEligible = false
+        }
+        onCanceled: dismissEligible = false
+    }
 
     // --- portrait: big centred cover for no-lyric / instrumental tracks. It zooms +
     // fades in/out on the lyrics↔cover switch (SPlayer's zoom transition) — no big/small

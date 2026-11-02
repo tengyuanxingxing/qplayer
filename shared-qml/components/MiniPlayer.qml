@@ -16,6 +16,9 @@ SmoothRectangle {
 
     signal lyricsRequested()
     property bool liquidGlass: false
+    // Consume every point in the capsule before it can reach a scrolling song row.
+    // The transport controls below are later siblings and keep their own actions.
+    MouseArea { anchors.fill:parent;onClicked:mini.lyricsRequested() }
 
     function fmt(ms) {
         if (ms <= 0) return "0:00";
@@ -134,10 +137,7 @@ SmoothRectangle {
             anchors.fill: parent
             anchors.topMargin: -10
             anchors.bottomMargin: -10
-            onClicked: {
-                if (player.durationMs > 0)
-                    player.seek(Math.round(mouseX / width * player.durationMs));
-            }
+            onClicked: mini.lyricsRequested()
         }
     }
 
@@ -153,6 +153,7 @@ SmoothRectangle {
     }
     IconButton {
         id: playBtn
+        objectName: "miniPlayerPlayButton"
         anchors.right: nextBtn.left
         anchors.verticalCenter: parent.verticalCenter
         anchors.verticalCenterOffset: 1
@@ -247,24 +248,9 @@ SmoothRectangle {
             startAngle: -90 + (mini.liquidGlass && mini.sweeping ? mini._sweepPhase * 360 : 0)
         }
 
-        // Centre opens lyrics; the outer band seeks clockwise from twelve.
-        MouseArea {
-            anchors.fill: parent
-            onClicked: (mouse) => {
-                var dx = mouse.x - width / 2
-                var dy = mouse.y - height / 2
-                var distanceSq = dx * dx + dy * dy
-                var innerRadius = Math.max(0, cover.width / 2 - 4)
-                var outerRadius = width / 2 + 4
-                if (distanceSq < innerRadius * innerRadius) {
-                    mini.lyricsRequested()
-                } else if (distanceSq <= outerRadius * outerRadius && player.durationMs > 0) {
-                    var angle = Math.atan2(dy, dx) + Math.PI / 2
-                    if (angle < 0) angle += Math.PI * 2
-                    player.seek(Math.round(angle / (Math.PI * 2) * player.durationMs))
-                }
-            }
-        }
+        // The ring shares the capsule's open-player action; seeking stays in the full player.
+        MouseArea { anchors.fill: parent; onClicked: mini.lyricsRequested() }
+
     }
 
     // Cover + title/artist: tap anywhere here to open the lyric page.

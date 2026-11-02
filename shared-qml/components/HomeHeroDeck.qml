@@ -19,7 +19,7 @@ Flickable {
             Text { x:18;y:20;width:parent.width-146;text:index===0?"猜你喜欢":(index===1?"每日推荐":"音乐探索");wrapMode:Text.Wrap;font.pixelSize:24;font.weight:Font.DemiBold;color:"#12313E" }
             Text { x:18;anchors.bottom:parent.bottom;anchors.bottomMargin:18;width:parent.width-76;text:deck.songs.length>index?deck.songs[index].name:"发现下一首喜欢";font.pixelSize:16;color:"#173E4B";elide:Text.ElideRight }
             Icon { anchors.right:parent.right;anchors.rightMargin:20;anchors.bottom:parent.bottom;anchors.bottomMargin:16;name:"play_circle";width:36;height:36;color:"#F8FFFFFF" }
-            Ripple { anchors.fill:parent;clipRadius:22;onClicked:if(tapAllowed)player.playRecommendation(Math.min(index,Math.max(0,deck.songs.length-1))) }
+            Ripple { anchors.fill:parent;clipRadius:22;onClicked:if(tapAllowed)player.playQqGuess(Math.min(index,Math.max(0,deck.songs.length-1))) }
         }
     }
 }
