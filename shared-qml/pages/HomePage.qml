@@ -10,10 +10,6 @@ Item {
     signal openPlaylist()
     signal openSearch()
     property var songs:player.qqGuessSongs
-    property var playlists:player.sourceContentActive?player.sourceRecommendPlaylists:player.recommendPlaylists
-    property int playlistCount:playlists?playlists.length:0
-    property int columns:Math.max(2,Math.floor(width/180))
-    property real tile:(width-40-(columns-1)*14)/columns
     property int favoriteWatch:player.unifiedFavoritesCount
     onFavoriteWatchChanged:if(page.visible)player.refreshHeartExplore()
     onVisibleChanged:if(page.visible){player.loadHome();player.refreshHeartExplore();player.refreshPlaybackInfo()}
@@ -21,7 +17,7 @@ Item {
         id:scroll
         objectName:"homeRecommendationsScroll"
         anchors.fill:parent;clip:true;contentWidth:width
-        contentHeight:cards.y+Math.ceil(page.playlistCount/page.columns)*(page.tile+72)+32+page.bottomContentInset
+        contentHeight:related.y+related.height+24+page.bottomContentInset
         Rectangle {
             x:20;y:12;width:parent.width-92;height:44;radius:22;color:Theme.color.surfaceContainerHigh
             Icon { x:16;y:10;name:"search";color:Theme.color.onSurfaceVariantSummary }
@@ -53,21 +49,6 @@ Item {
             songs:player.playbackRelatedSongs;kind:"related";pageActive:page.visible
             visible:player.playbackRelatedSongs.length>0
             height:visible?72+Math.min(3,songs.length)*76:0
-        }
-        Text { id:playlistTitle;x:20;y:related.y+related.height+20;visible:page.playlistCount>0;text:"精选歌单";font.pixelSize:22;font.weight:Font.DemiBold;color:Theme.color.onSurfaceColor }
-        Item {
-            id:cards;x:0;y:playlistTitle.y+(page.playlistCount>0?48:0);width:scroll.width
-            height:Math.ceil(page.playlistCount/page.columns)*(page.tile+72)
-            Repeater {
-                model:page.visible?page.playlists:null
-                windowStart:Math.max(0,Math.floor((scroll.contentY-cards.y)/(page.tile+72))-1)*page.columns
-                windowCount:(Math.ceil(scroll.height/(page.tile+72))+3)*page.columns
-                PlaylistCard {
-                    x:20+(index%page.columns)*(page.tile+14);y:Math.floor(index/page.columns)*(page.tile+72)
-                    tile:page.tile;name:modelData.name;count:modelData.trackCount;coverUrl:modelData.coverUrl;coverThumbPath:modelData.coverThumbPath||""
-                    onClicked:{page.pendingPlaylist=modelData;page.openPlaylist()}
-                }
-            }
         }
     }
 }

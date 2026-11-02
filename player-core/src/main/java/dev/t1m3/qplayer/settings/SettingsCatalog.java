@@ -44,6 +44,8 @@ public final class SettingsCatalog {
     public static final String PLUGINS = "plugins";
     public static final String ABOUT = "about";
     public static final String FRAME_STATS_KEY = "showFrameStats";
+    public static final String PLAYBACK_QUALITY_KEY = "playbackQuality";
+    public static final String AUTO_ROTATE_KEY = "playbackAutoRotate";
 
     public static final List<String> CATEGORIES = Collections.unmodifiableList(
             Arrays.asList(APPEARANCE, PAGES, PLAYBACK, LYRIC, OVERLAY_LYRIC, DESKTOP_LYRIC,
@@ -235,10 +237,13 @@ public final class SettingsCatalog {
                 .desc("settings.fade.desc")
                 .group("audio")
                 .build());
-        out.add(SettingSpec.toggle("highQuality", PLAYBACK, "settings.highQuality.title", true)
-                .desc("settings.highQuality.desc")
+        out.add(SettingSpec.dropdown(PLAYBACK_QUALITY_KEY, PLAYBACK, "settings.playbackQuality.title", 1,
+                        "settings.playbackQuality.standard", "settings.playbackQuality.hq", "settings.playbackQuality.sq")
+                .desc("settings.playbackQuality.desc")
                 .group("audio")
                 .build());
+        out.add(SettingSpec.toggle(AUTO_ROTATE_KEY, PLAYBACK, "settings.autoRotate.title", true)
+                .desc("settings.autoRotate.desc").onlyOn(ANDROID).group("display").build());
 
         // ---- 歌词 -----------------------------------------------------------
         // Display/background first: those are what people open this tab to

@@ -551,7 +551,7 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
             case "monet": controller.setMonetEnabled(bool(key)); break;
             case "mirror": controller.setUpdateMirror(bool(key)); break;
             case "fade": controller.setFadeEnabled(bool(key)); break;
-            case "highQuality": controller.setHighQualityEnabled(bool(key)); break;
+            case SettingsCatalog.PLAYBACK_QUALITY_KEY: controller.setPlaybackQuality(intOf(key)); break;
             case "maxCacheSizeMB": controller.setCacheMaxSizeMB(intOf(key)); break;
             case SettingsCatalog.HOME_PLAYLIST_LIMIT_KEY:
                 controller.setHomePlaylistLimit(intOf(key));
@@ -699,6 +699,8 @@ public final class SettingsCore extends QObject implements LyricCompositor.Setti
      *  type it was first written with, so a setting that changed shape needs a new
      *  key seeded from the old one. */
     private void migrateLegacyKeys() {
+        if (!store.has(SettingsCatalog.PLAYBACK_QUALITY_KEY))
+            store.putInt(SettingsCatalog.PLAYBACK_QUALITY_KEY, store.getBool("highQuality",true) ? 1 : 0);
         // "lyricBgStatic" (bool) -> "lyricBgMode" (0 dynamic / 1 static).
         if (!store.has(SettingsCatalog.BG_MODE_KEY) && store.getBool("lyricBgStatic", false)) {
             store.putInt(SettingsCatalog.BG_MODE_KEY, 1);

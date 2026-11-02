@@ -42,7 +42,7 @@ final class AudioCacheCoordinator {
 
     private void admit(Track track, boolean pin, CompletableFuture<Boolean> requested) {
             if (!accepting) { requested.complete(false); return; }
-            String canonical = track.canonicalId();
+            String canonical = track.audioCacheId();
             Download existing = inFlight.get(canonical);
             if (existing != null) {
                 existing.pin |= pin;

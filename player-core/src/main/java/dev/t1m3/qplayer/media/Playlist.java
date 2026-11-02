@@ -19,6 +19,7 @@ public final class Playlist {
     public long playCount;
     public boolean subscribed;
     public boolean owned;
+    public boolean favoriteSongs;
     public boolean mutable;
     public boolean deletable;
     public List<Song> songs = new ArrayList<>();

@@ -12,6 +12,7 @@ parser.add_argument("--signing-key", type=Path, help="External PEM EC publisher 
 parser.add_argument("--openssl", default="openssl", help="OpenSSL executable")
 parser.add_argument("--plugin", action="append", choices=("netease", "qqmusic", "soda"),
                     help="Package only these changed plugins; defaults to all three")
+parser.add_argument("--embed", action="store_true", help="Embed signed QQ/NetEase packages for offline Android setup")
 args = parser.parse_args()
 if args.signing_key and not args.signing_key.is_file():
     parser.error("signing key does not exist")
@@ -41,3 +42,9 @@ for name in args.plugin or ("netease", "qqmusic", "soda"):
         for path, data in sorted(files.items()):
             package.writestr(path, data)
     print(archive)
+    if args.embed and name in ("netease", "qqmusic"):
+        if not args.signing_key:
+            parser.error("embedded packages must be signed")
+        bundled = root / "player-core/src/main/resources/dev/t1m3/qplayer/plugin/bundled"
+        bundled.mkdir(parents=True, exist_ok=True)
+        (bundled / (manifest["id"] + ".qplug")).write_bytes(archive.read_bytes())

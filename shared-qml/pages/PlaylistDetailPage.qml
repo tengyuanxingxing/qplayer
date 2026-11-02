@@ -7,6 +7,7 @@ import "../components"
 // Drill-in playlist view: header with back + title, then the tracks.
 Rectangle {
     id: page
+    objectName:"playlistDetailPage"
     property real bottomContentInset: 0
     signal back()
     signal home()
@@ -19,10 +20,19 @@ Rectangle {
     onPlaylistWatchChanged: {
         tracks.contentY = 0
         page.filterText = ""
+        page.albumsTab = false
         page.exitSelectMode()
     }
 
     readonly property bool unified: player.openSourcePlaylistId === "qplayer:playlist:unified-favorites"
+    readonly property bool favorites: {
+        var projection=player.myPlaylists
+        return page.unified || player.isFavoritesPlaylist(player.openSourcePlaylistId)
+    }
+    property bool albumsTab:false
+    onAlbumsTabChanged:if(page.albumsTab)player.refreshFavoriteAlbums()
+    property string albumsSourceWatch:player.unifiedFavoritesSource
+    onAlbumsSourceWatchChanged:if(page.albumsTab)player.refreshFavoriteAlbums()
     property string filterText: ""
     property var filteredTracks: {
         var all = player.openSourcePlaylistId !== ""
@@ -119,7 +129,7 @@ Rectangle {
             Text {
                 Layout.fillWidth: true
                 Layout.alignment: Qt.AlignVCenter
-                text: i18n.t("playlist.title")
+                text: page.favorites ? "我的收藏" : i18n.t("playlist.title")
                 color: Theme.color.onSurfaceColor
                 font.pixelSize: 24
                 font.weight: Font.DemiBold
@@ -206,23 +216,35 @@ Rectangle {
             }
         }
 
+        TabRowWithContour {
+            objectName:"favoritesContentTabs"
+            Layout.fillWidth:true;Layout.preferredHeight:48
+            visible:page.favorites
+            tabs:["歌曲", "专辑"]
+            selectOnClick:false;selectedTabIndex:page.albumsTab?1:0
+            onTabSelected:(index)=>page.albumsTab=(index===1)
+        }
+
         Item {
             Layout.fillWidth: true
             Layout.fillHeight: true
 
             VirtualSongList {
                 id: tracks
+                objectName:"playlistDetailTracks"
+                visible:!page.albumsTab
+                enabled:visible
                 anchors.fill: parent
                 bottomContentInset: page.bottomContentInset
                 // Playlist metadata and filtering belong to the scroll content.
                 // On a phone this gives the track list the full viewport after the
                 // first swipe instead of permanently reserving half the screen.
-                headerHeight: player.playlistLoading ? 0 : 212
+                headerHeight: player.playlistLoading || page.favorites ? 0 : 212
                 header: Component {
                     Item {
                         width: tracks.width
                         height: tracks.headerHeight
-                        visible: !player.playlistLoading
+                        visible: !player.playlistLoading && !page.favorites
 
                         CoverImage {
                             id: playlistCover
@@ -311,7 +333,7 @@ Rectangle {
                 // Drop the row delegates when the detail page is closed (see
                 // QueuePage): an invisible detail otherwise keeps the whole
                 // playlist's SongRows alive after you return home.
-                list: page.visible ? page.filteredTracks : null
+                list: page.visible && !page.albumsTab ? page.filteredTracks : null
                 // Long-press a track → add to another playlist, and (in your own
                 // playlist) remove it from this one. Not login-gated: adding to the queue
                 // (local list) works signed-out too.
@@ -338,10 +360,16 @@ Rectangle {
                 }
             }
 
+            FavoriteAlbumsList {
+                anchors.fill:parent
+                visible:page.favorites && page.albumsTab;enabled:visible
+                bottomContentInset:page.bottomContentInset
+            }
+
             LoadingIndicator {
                 objectName: "detailLoadingIndicator"
                 anchors.centerIn: parent
-                visible: player.playlistLoading && (!page.filteredTracks || page.filteredTracks.length === 0)
+                visible: !page.albumsTab && player.playlistLoading && (!page.filteredTracks || page.filteredTracks.length === 0)
                 running: visible
             }
 

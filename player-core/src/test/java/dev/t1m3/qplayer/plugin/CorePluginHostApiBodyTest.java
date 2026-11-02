@@ -30,6 +30,12 @@ public class CorePluginHostApiBodyTest {
         assertNull(CorePluginHostApi.requestBody(new LinkedHashMap<>()));
     }
 
+    @Test public void optionalJsUndefinedBodyDoesNotBreakQrGets() throws Exception {
+        assertNull(CorePluginHostApi.requestBody(args("body", null)));
+        assertArrayEquals(new byte[0],CorePluginHostApi.requestBody(args("body", "")));
+        assertThrows(IllegalArgumentException.class, () -> CorePluginHostApi.requestBody(args("body", 123)));
+    }
+
     @Test
     public void textBodyIsSentAsUtf8() throws Exception {
         assertArrayEquals("{\"a\":1}".getBytes(StandardCharsets.UTF_8),

@@ -882,6 +882,7 @@ function userPlaylists(args) {
           playlist.owned = !!(value.creator && String(value.creator.userId) === String(profile.id));
           playlist.mutable = playlist.owned;
           playlist.deletable = playlist.owned && !isFavoritePlaylist(value);
+          playlist.favoriteSongs = playlist.owned && isFavoritePlaylist(value);
           return playlist;
         });
       });
@@ -1461,6 +1462,16 @@ var togetherFeature = require("./together").create({
 });
 
 // Read-only native comment pages. Existing cookies and the provider's encrypted transport are reused.
+function favoriteAlbums(args) {
+  var offset=Math.max(0,Number(args.cursor || 0));
+  return weapi("album/sublist",{limit:100,offset:offset,total:true}).then(function(body){
+    if(Number(body.code)!==200)throw new Error("收藏专辑加载失败，请检查网易云登录状态");
+    var rows=body.data || [];
+    return {items:rows.map(function(row){return albumDto(row,[])}),
+      nextCursor:body.hasMore && rows.length?String(offset+rows.length):""};
+  });
+}
+
 function comments(args) {
   var offset = Math.max(0, Number(args.cursor || 0));
   var hot = args.sort === "hot";
@@ -1478,6 +1489,7 @@ function comments(args) {
 
 module.exports = {handlers: {
   comments: comments,
+  favoriteAlbums: favoriteAlbums,
   hotSearch: hotSearch,
   searchSongs: searchSongs,
   searchAlbums: searchAlbums,

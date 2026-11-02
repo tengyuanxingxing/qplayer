@@ -380,6 +380,55 @@ public class PlayerControllerSessionTest {
         assertTrue(((java.util.concurrent.ExecutorService) io.get(controller)).isTerminated());
     }
 
+    @Test public void qualitySwitchKeepsDecoderPositionAndPausedIntent() throws Exception {
+        controller.setPlaybackQuality(2);
+        Track track=song("quality");track.applyCanonicalId("qq:song:quality");track.streamQuality="exhigh";
+        long request=select(track);
+        backend.play("old.mp3",12345);
+        controller.positionMs.set(90000L); // UI may be stale after a seek backwards.
+        synchronized (QmlRuntimeLock.MONITOR) {session.playing=false;session.resolving=false;}
+        backend.pause();
+        qualityComplete(1,request,track,"lossless","new.flac",null);
+        assertEquals("new.flac",backend.source);assertEquals(12345L,backend.position);
+        assertFalse(backend.playing);assertEquals("lossless",track.streamQuality);
+        assertTrue(controller.playbackQualityStatus.peek().contains("FLAC"));
+    }
+
+    @Test public void failedQualitySwitchDoesNotStopTheWorkingStream() throws Exception {
+        controller.setPlaybackQuality(2);
+        Track track=song("failure");long request=select(track);
+        backend.play("working.mp3",25000);
+        qualityComplete(1,request,track,"lossless",null,new IOException("denied"));
+        assertEquals(1,backend.plays);assertEquals("working.mp3",backend.source);assertTrue(backend.playing);
+    }
+
+    @Test public void qualityChangedDuringInitialResolutionKeepsTheRequestedResumePosition() throws Exception {
+        controller.setPlaybackQuality(2);
+        Track track=song("pending");long request=select(track);
+        synchronized (QmlRuntimeLock.MONITOR) {session.startPositionMs=34000;}
+        qualityComplete(1,request,track,"lossless","new.flac",null);
+        assertEquals(34000,backend.position);assertTrue(backend.playing);
+    }
+
+    @Test public void qualityReplyCannotReplaceAReselectedSameSongOrNewerSelection() throws Exception {
+        controller.setPlaybackQuality(2);
+        Track track=song("stale");long request=select(track);
+        backend.play("working.mp3",25000);
+        synchronized (QmlRuntimeLock.MONITOR) {session.select(true);}
+        qualityComplete(1,request,track,"lossless","stale.flac",null);
+        assertEquals("working.mp3",backend.source);
+        synchronized (QmlRuntimeLock.MONITOR) {request=session.request();}
+        qualityComplete(0,request,track,"lossless","older-quality.flac",null);
+        assertEquals("working.mp3",backend.source);assertEquals(1,backend.plays);
+    }
+
+    private void qualityComplete(long generation,long request,Track track,String quality,String url,Throwable error) throws Exception {
+        StreamDescriptor stream=new StreamDescriptor();stream.url=url;stream.mimeType="audio/flac";stream.cacheable=false;
+        Method method=PlayerController.class.getDeclaredMethod("completePlaybackQuality",long.class,long.class,Track.class,String.class,StreamDescriptor.class,Throwable.class);
+        method.setAccessible(true);
+        synchronized (QmlRuntimeLock.MONITOR) {method.invoke(controller,generation,request,track,quality,stream,error);}
+    }
+
     private long select(Track track) {
         synchronized (QmlRuntimeLock.MONITOR) {
             session.queue.clear();
@@ -403,7 +452,8 @@ public class PlayerControllerSessionTest {
                         MediaId.class,
                         StreamDescriptor.class,
                         Throwable.class,
-                        long.class);
+                        long.class,
+                        String.class);
         method.setAccessible(true);
         synchronized (QmlRuntimeLock.MONITOR) {
             method.invoke(
@@ -413,7 +463,7 @@ public class PlayerControllerSessionTest {
                     MediaId.parse(track.canonicalId()),
                     stream,
                     null,
-                    0L);
+                    0L, "exhigh");
         }
     }
 

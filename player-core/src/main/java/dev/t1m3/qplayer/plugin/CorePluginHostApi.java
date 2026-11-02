@@ -819,8 +819,10 @@ public final class CorePluginHostApi implements PolicyAwarePluginHostApi, AutoCl
      * has always offered a {@code bodyBase64} view; this is its counterpart.
      */
     static byte[] requestBody(Map<String, Object> args) throws IOException {
-        boolean text = args.containsKey("body");
-        boolean binary = args.containsKey("bodyBase64");
+        // JS undefined is transported as null by the bridge. An optional body
+        // on a GET is absent; an intentionally empty POST body is valid text.
+        boolean text = args.get("body") != null;
+        boolean binary = args.get("bodyBase64") != null;
         if (text && binary) {
             throw new IllegalArgumentException("pass either body or bodyBase64, not both");
         }
@@ -832,7 +834,9 @@ public final class CorePluginHostApi implements PolicyAwarePluginHostApi, AutoCl
                 throw new IllegalArgumentException("bodyBase64 is not valid base64", malformed);
             }
         } else if (text) {
-            body = string(args, "body").getBytes(StandardCharsets.UTF_8);
+            Object value = args.get("body");
+            if (!(value instanceof String)) throw new IllegalArgumentException("body must be a string");
+            body = ((String) value).getBytes(StandardCharsets.UTF_8);
         } else {
             return null;
         }

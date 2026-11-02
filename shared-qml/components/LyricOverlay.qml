@@ -27,22 +27,16 @@ Item {
     // Eased in LyricCompositor rather than by a Behavior here so this chrome and
     // the host-drawn column move on exactly the same value.
     property real fullWidthK: player.lyricFullWidth
-    property bool offsetPanelOpen: false
+    property bool qualityPanelOpen: false
     property bool fontPanelOpen: false
     readonly property int textSize: settings.value("playerTextSize")
-    onFontPanelOpenChanged: player.setLyricOffsetPanelOpen(fontPanelOpen || offsetPanelOpen)
+    onFontPanelOpenChanged: player.setLyricOffsetPanelOpen(fontPanelOpen || qualityPanelOpen)
     // Top row inset for the three title buttons. Desktop overrides this to 6
     // (Main.qml hides the custom title bar while the lyric page is open, so the
     // buttons sit flush at the very top of the window); mobile keeps the status
     // bar inset so they clear the system bar.
     property real topPad: settings.topInset + 6
-    onOffsetPanelOpenChanged: {
-        player.setLyricOffsetPanelOpen(fontPanelOpen || offsetPanelOpen)
-        // Synchronize once on entry. Do not feed every player property change back
-        // into Slider.value while its MouseArea is dragging: that re-entrant write
-        // interrupts qml4j's active gesture as soon as the thumb moves one step.
-        if (offsetPanelOpen) offsetSlider.value = player.lyricOffsetMs
-    }
+    onQualityPanelOpenChanged: player.setLyricOffsetPanelOpen(fontPanelOpen || qualityPanelOpen)
     // Host actions can also close the lyric page, so clear the local panel when
     // the authoritative page state changes. Mirror it with a plain binding, not
     // Connections { target: player }: player is
@@ -50,12 +44,12 @@ Item {
     // QObject target (a non-QObject target crashes with a ClassCastException at
     // Property.fireListeners on load).
     property bool lyricsOpenMirror: player.lyricsOpen
-    onLyricsOpenMirrorChanged: if (!lyricsOpenMirror) { overlay.offsetPanelOpen = false; overlay.fontPanelOpen = false; player.closeComments() }
+    onLyricsOpenMirrorChanged: if (!lyricsOpenMirror) { overlay.qualityPanelOpen = false; overlay.fontPanelOpen = false; player.closeComments() }
 
     function handleBack() {
         if (player.commentsOpen) { player.closeComments(); return true }
-        if (!overlay.fontPanelOpen && !overlay.offsetPanelOpen && offsetPanel.opacity <= 0.01) return false
-        overlay.offsetPanelOpen = false
+        if (!overlay.fontPanelOpen && !overlay.qualityPanelOpen) return false
+        overlay.qualityPanelOpen = false
         overlay.fontPanelOpen = false
         return true
     }
@@ -185,9 +179,10 @@ Item {
         anchors.right: parent.right
         anchors.rightMargin: 6
         type: "standard"
-        icon: "sync"
+        objectName: "playbackQualityButton"
+        icon: "speaker"
         contentColor: "#FFFFFFFF"
-        onClicked: { overlay.fontPanelOpen = false; overlay.offsetPanelOpen = !overlay.offsetPanelOpen }
+        onClicked: { overlay.fontPanelOpen = false; overlay.qualityPanelOpen = !overlay.qualityPanelOpen }
     }
 
     IconButton {
@@ -196,7 +191,7 @@ Item {
         anchors.top: parent.top; anchors.topMargin: overlay.topPad
         anchors.right: offsetBtn.left; anchors.rightMargin: 52
         icon: "text_fields"; contentColor: "#FFFFFFFF"
-        onClicked: { overlay.offsetPanelOpen = false; overlay.fontPanelOpen = !overlay.fontPanelOpen }
+        onClicked: { overlay.qualityPanelOpen = false; overlay.fontPanelOpen = !overlay.fontPanelOpen }
     }
     PlaybackTextSizePanel {
         visible: overlay.fontPanelOpen
@@ -232,146 +227,12 @@ Item {
         onClicked: settings.setValue("lyricFullWidth", !fullWidthBtn.wide)
     }
 
-    MouseArea {
-        id: offsetScrim
-        visible: overlay.offsetPanelOpen
+    PlaybackQualitySheet {
         anchors.fill: parent
-        z: 1
-        onClicked: overlay.offsetPanelOpen = false
-    }
-
-    // Fixed-step slider: one control scales cleanly down to phone width, unlike the
-    // previous row of four buttons which could overflow this card.
-    SmoothRectangle {
-        id: offsetPanel
-        // Keep painting until the exit fade reaches zero; binding visible directly
-        // to offsetPanelOpen would cut the zoom-out off on its first frame.
-        visible: overlay.offsetPanelOpen || opacity > 0.01
-        opacity: overlay.offsetPanelOpen ? 1 : 0
-        scale: overlay.offsetPanelOpen ? 1 : 0.8
-        transformOrigin: Item.Center
-        Behavior on opacity {
-            NumberAnimation { duration: 150 }
-        }
-        Behavior on scale {
-            NumberAnimation {
-                duration: overlay.offsetPanelOpen ? 200 : 150
-                easing.type: overlay.offsetPanelOpen ? Easing.OutCubic : Easing.InCubic
-            }
-        }
-        z: 2
-        anchors.top: offsetBtn.bottom
-        anchors.topMargin: 8
-        anchors.right: parent.right
-        anchors.rightMargin: 6
-        width: Math.min(320, parent.width - 24)
-        height: 176
-        radius: 20
-        color: Theme.color.surfaceContainerHigh
-        borderWidth: 1
-        borderColor: Theme.color.outlineVariant
-
-        MouseArea { anchors.fill: parent }
-
-        Text {
-            id: offsetTitle
-            anchors.top: parent.top
-            anchors.topMargin: 18
-            anchors.left: parent.left
-            anchors.leftMargin: 18
-            text: i18n.t("lyric.offset.title")
-            color: Theme.color.onSurfaceColor
-            font.family: Theme.typography.titleSmall.family
-            font.pixelSize: Theme.typography.titleSmall.size
-        }
-        Text {
-            anchors.top: parent.top
-            anchors.topMargin: 16
-            anchors.right: parent.right
-            anchors.rightMargin: 18
-            text: (offsetSlider.value > 0 ? "+" : "") + offsetSlider.value + " ms"
-            color: Theme.color.primary
-            font.family: Theme.typography.titleMedium.family
-            font.pixelSize: Theme.typography.titleMedium.size
-            font.weight: Theme.typography.titleMedium.weight
-        }
-        Text {
-            id: offsetCaption
-            anchors.top: offsetTitle.bottom
-            anchors.topMargin: 4
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
-            text: i18n.t("lyric.offset.desc")
-            color: Theme.color.onSurfaceVariantColor
-            font.family: Theme.typography.bodySmall.family
-            font.pixelSize: Theme.typography.bodySmall.size
-            elide: Text.ElideRight
-        }
-
-        Slider {
-            id: offsetSlider
-            anchors.top: offsetCaption.bottom
-            anchors.topMargin: 10
-            anchors.left: parent.left
-            anchors.right: parent.right
-            anchors.leftMargin: 18
-            anchors.rightMargin: 18
-            from: -5000
-            to: 5000
-            stepSize: 50
-            snapMode: true
-            value: 0
-            // Keep dragging entirely local. Updating PlayerController on every 50 ms
-            // step re-enters the QML tree (lyric index + persistence) during the
-            // pointer callback and interrupts the gesture in qml4j.
-            onEditingFinished: player.setLyricOffset(value)
-        }
-
-        Text {
-            anchors.top: offsetSlider.bottom
-            anchors.topMargin: 1
-            anchors.left: parent.left
-            anchors.leftMargin: 18
-            text: i18n.t("lyric.offset.earlier")
-            color: Theme.color.onSurfaceVariantColor
-            font.family: Theme.typography.labelSmall.family
-            font.pixelSize: Theme.typography.labelSmall.size
-        }
-        Text {
-            anchors.top: offsetSlider.bottom
-            anchors.topMargin: 1
-            anchors.horizontalCenter: parent.horizontalCenter
-            text: "0"
-            color: Theme.color.onSurfaceVariantColor
-            font.family: Theme.typography.labelSmall.family
-            font.pixelSize: Theme.typography.labelSmall.size
-        }
-        Text {
-            anchors.top: offsetSlider.bottom
-            anchors.topMargin: 1
-            anchors.right: parent.right
-            anchors.rightMargin: 18
-            text: i18n.t("lyric.offset.later")
-            color: Theme.color.onSurfaceVariantColor
-            font.family: Theme.typography.labelSmall.family
-            font.pixelSize: Theme.typography.labelSmall.size
-        }
-        Button {
-            id: resetBtn
-            anchors.bottom: parent.bottom
-            anchors.bottomMargin: 8
-            anchors.right: parent.right
-            anchors.rightMargin: 10
-            type: "text"
-            text: i18n.t("lyric.offset.reset")
-            enabled: offsetSlider.value !== 0
-            onClicked: {
-                offsetSlider.value = 0
-                player.resetLyricOffset()
-            }
-        }
+        visible: overlay.qualityPanelOpen
+        enabled: visible
+        z: 80
+        onClosed: overlay.qualityPanelOpen = false
     }
 
     PlaybackPortraitHeader {

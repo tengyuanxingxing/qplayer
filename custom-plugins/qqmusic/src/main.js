@@ -156,13 +156,14 @@ function httpRaw(method, url, opts) {
   var headers = { "User-Agent": opts.ua || UA_PC, "Referer": opts.referer || REF_BASE };
   if (opts.cookie) headers["Cookie"] = opts.cookie;
   if (opts.contentType) headers["Content-Type"] = opts.contentType;
-  return call("http.request", {
+  var request = {
     url: url, method: method, headers: headers,
-    body: opts.body,
     includeBase64: !!opts.base64,
     followRedirects: opts.followRedirects !== false,
     timeoutMs: opts.timeoutMs || 15000
-  });
+  };
+  if (opts.body != null) request.body = opts.body;
+  return call("http.request", request);
 }
 
 // ---- HTTP helpers ----------------------------------------------------------
@@ -228,9 +229,9 @@ function musicuOnce(entries, override) {
     // 粘贴/网页登录拿到的 Cookie 自带 tmeLoginType,同样要带上,否则登录态只对
     // 读接口生效,写接口一律被拒。
     var loginType = Number(session.loginType || cookies.tmeLoginType || 0);
-    if (key && loginType) {
+    if (key) {
       comm.authst = key;
-      comm.tmeLoginType = loginType;
+      if (loginType) comm.tmeLoginType = loginType;
     }
     var body = { comm: comm };
     Object.keys(entries).forEach(function (k) { body[k] = entries[k]; });
@@ -635,29 +636,31 @@ function homePlaylists(args) {
 
 /** QQ 客户端的猜你喜欢 / 个性电台；沿用 musicu 的 Cookie、authst 与续期。 */
 function guessSongs(limit) {
-  var rows = [], seen = {}, excluded = [], attempts = 0;
+  var rows = [], seen = {}, attempts = 0, stalled = 0;
   function next() { return musicu({guess: {
     module: "music.radioProxy.MbTrackRadioSvr", method: "get_radio_track",
-    param: {id:99, num:Math.min(30, Math.max(1, limit)), from:0, scene:0,
-      song_ids:excluded, ext:{bluetooth:""}, should_count_down:1}
-  }}, ANDROID_COMM).then(function (body) {
+    // The account radio is a stateful Web feed, not radio station 99. Passing
+    // a fixed station/from=0 kept replaying its five-track preview; song_ids
+    // is not a supported pagination cursor on that request.
+    param: {}
+  }}, {ct:19, cv:0}).then(function (body) {
     var node = body.guess || {};
     if (Number(node.code || 0) !== 0) return rows;
-    var data = node.data || {}, tracks = data.tracks || [];
-    var before = rows.length;
-    tracks.forEach(function (row) {
-      var info = row.track_info || row.songInfo || row.song_info || row;
-      var id = Number(info.id || info.songid || 0);
-      if (id > 0 && excluded.indexOf(id) < 0) excluded.push(id);
+    var data = node.data || {}, tracks = [];
+    [data.track, data.songList, data.vec_song, data.tracks].some(function (list) {
+      if (Array.isArray(list) && list.length) { tracks = list; return true; }
+      return false;
     });
+    var before = rows.length;
     songsOf(tracks, function (row) {
       return row.track_info || row.songInfo || row.song_info || row;
     }).forEach(function (song) {
       if (!seen[song.id]) { seen[song.id] = true; rows.push(song); }
     });
-    // Some radio responses contain fewer tracks than num. Continue with exclusions,
-    // retaining service order, but stop if the service repeats/ends its results.
-    if (rows.length < limit && rows.length > before && ++attempts < 10) return next();
+    stalled = rows.length > before ? 0 : stalled + 1;
+    // A duplicate batch can be followed by a new batch. Retry once, bounded,
+    // without duplicating tracks or substituting unrelated search results.
+    if (rows.length < limit && tracks.length && stalled < 2 && ++attempts < 12) return next();
     return rows.slice(0, limit);
   }).catch(function (error) { if (rows.length) return rows.slice(0, limit); throw error; }); }
   return next();
@@ -776,7 +779,7 @@ function userPlaylists(args) {
         var dto = ownPlaylistDto(item);
         // 「我喜欢」排在最前,和 QQ 音乐自己的顺序一致。
         if (dto.id && dto.name) {
-          if (Number((item || {}).dirId || 0) === FAV_DIR_ID) out.unshift(dto);
+          if (Number((item || {}).dirId || 0) === FAV_DIR_ID) { dto.favoriteSongs=true;out.unshift(dto); }
           else out.push(dto);
         }
       });
@@ -1623,6 +1626,7 @@ function qqExchangeCode(code) {
     var cookies = {
       uin: id, musicid: id, musickey: key, qqmusic_key: key, qm_keyst: key
     };
+    if (data.encryptUin || data.euin) cookies.euin = String(data.encryptUin || data.euin);
     var session = {
       loginType: Number(data.loginType || 2),
       refreshToken: String(data.refresh_token || ""),
@@ -1751,6 +1755,28 @@ function login(args) {
 var unblock = require("./unblock");
 
 // Source-owned QQ comment reader, kept outside the player host.
+// Account-owned album favorites; this is not derived from liked songs.
+function favoriteAlbums(args) {
+  var offset = Math.max(0, Number(args.cursor || 0)), size = 100;
+  return loadCookies().then(function(cookies) {
+    if (!musicKey(cookies)) throw new Error("请先登录 QQ 音乐");
+    return musicu({albums:{module:"music.musicasset.AlbumFavRead",method:"CgiGetAlbumFavInfo",
+      param:{euin:String(cookies.euin || ""),offset:offset,size:size}}});
+  }).then(function(body) {
+    var node=body.albums || {};
+    if (Number(body.code || 0)!==0 || Number(node.code || 0)!==0 || !node.data) throw new Error("QQ 收藏专辑加载失败 ("+(node.code || body.code || "empty")+")");
+    var data=node.data || {}, rows=data.v_list || [];
+    if (data.hide===true || Number(data.hide)===1) throw new Error("QQ 收藏专辑不可见");
+    return {items:rows.map(function(raw) {
+      var a=albumDto(raw,[]);a.trackCount=Number(raw.songnum || 0);
+      a.publishTimeMs=Number(raw.pubtime || 0)*1000;
+      a.artists=(raw.v_singer || []).filter(function(x){return x.mid && x.name}).map(function(x){return {id:String(x.mid),name:x.name}});
+      return a;
+    }).filter(function(a){return a.id && a.name}),
+      nextCursor:rows.length && (Number(data.hasmore || 0)>0 || offset+rows.length<Number(data.total || 0))?String(offset+rows.length):""};
+  });
+}
+
 function comments(args) {
   var page = Math.max(0, Number(args.cursor || 0));
   var hot = args.sort === "hot";
@@ -1774,6 +1800,7 @@ function comments(args) {
 module.exports = {
   handlers: {
     comments: comments,
+    favoriteAlbums: favoriteAlbums,
     searchSongs: searchSongs,
     searchArtists: searchArtists,
     songDetails: songDetails,

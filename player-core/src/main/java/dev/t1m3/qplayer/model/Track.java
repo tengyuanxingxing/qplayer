@@ -27,6 +27,14 @@ public class Track {
     public String contentUri;
     /** Provider stream URL — fetched lazily, transient, and possibly null. */
     public String streamUrl;
+    public String streamQuality = "";
+    public String streamMimeType = "";
+    /** Quality variants share a logical song but must not reuse lower-quality bytes. */
+    public String audioCacheId() {
+        String id = canonicalId();
+        return "standard".equals(streamQuality) || "lossless".equals(streamQuality) || "exhigh".equals(streamQuality)
+                ? id + "|quality=" + streamQuality : id;
+    }
     /** Provider-required headers for {@link #streamUrl}; transient and never persisted. */
     public Map<String, String> streamHeaders = new LinkedHashMap<>();
     /** Epoch millis after which the provider says {@link #streamUrl} must be resolved again. */

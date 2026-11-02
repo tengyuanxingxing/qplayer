@@ -174,6 +174,12 @@ public final class PluginProviderService {
                 Collections.<String, Object>singletonMap("limit", Math.max(1, Math.min(500, limit))));
     }
 
+    public CompletableFuture<Page<Album>> favoriteAlbums(String provider, String cursor) {
+        return manager.invoke(provider, ProviderCapability.FAVORITE_ALBUMS.wireName(),
+                Collections.<String,Object>singletonMap("cursor", cursor == null ? "" : cursor))
+                .thenApply(raw -> parseAlbumPage(provider,raw));
+    }
+
     public CompletableFuture<List<Playlist>> userPlaylists(String provider, int limit) {
         return manager.invoke(provider, ProviderCapability.USER_PLAYLISTS.wireName(),
                 Collections.<String, Object>singletonMap("limit",
@@ -607,6 +613,7 @@ public final class PluginProviderService {
         playlist.playCount = boundedLong(object.get("playCount"), 0L,
                 Long.MAX_VALUE, "playlist.playCount");
         playlist.subscribed = Boolean.TRUE.equals(object.get("subscribed"));
+        playlist.favoriteSongs = Boolean.TRUE.equals(object.get("favoriteSongs"));
         playlist.owned = Boolean.TRUE.equals(object.get("owned"));
         playlist.mutable = playlist.owned;
         playlist.deletable = playlist.owned;

@@ -22,6 +22,31 @@ import static org.junit.Assert.*;
 public class AudioCacheCoordinatorTest {
     @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
+    @Test public void sameSongDifferentQualitiesNeverJoinOrReuseEachOthersBytes() throws Exception {
+        ExecutorService io=Executors.newSingleThreadExecutor();
+        try {
+            DiskCache cache=cache();AtomicInteger transfers=new AtomicInteger();
+            AudioCacheCoordinator coordinator=new AudioCacheCoordinator(cache,io,(track,path)->{
+                try { write(Paths.get(path),1024);transfers.incrementAndGet();return CompletableFuture.completedFuture(true); }
+                catch (IOException e) { throw new RuntimeException(e); }
+            },track->{});
+            Track standard=song();standard.streamQuality="standard";
+            Track sq=song();sq.streamQuality="lossless";
+            Track hq=song();hq.streamQuality="exhigh";
+            assertTrue(coordinator.cache(standard,false).get(3,TimeUnit.SECONDS));
+            assertNull(cache.getAudio(sq.audioCacheId()));assertNull(cache.getAudio(hq.audioCacheId()));
+            assertTrue(coordinator.cache(sq,true).get(3,TimeUnit.SECONDS));
+            assertEquals(2,transfers.get());assertNotEquals(cache.getAudio(standard.audioCacheId()),cache.getAudio(sq.audioCacheId()));
+            assertNotNull("offline listing can still find the logical song",cache.getAudio(sq.canonicalId()));
+            assertTrue(cache.isActivelyCached(sq.canonicalId()));
+            assertFalse(cache.isActivelyCached(standard.audioCacheId()));
+            assertTrue(cache.deleteAudio(sq.canonicalId()));
+            assertNull(cache.getAudio(sq.audioCacheId()));assertNull(cache.getAudio(standard.audioCacheId()));
+            assertFalse(cache.isActivelyCached(sq.canonicalId()));
+            ControllerTestLifecycle.releaseCompletedCache(coordinator);
+        } finally {io.shutdownNow();}
+    }
+
     @Test public void laterManualRequestsJoinAutomaticDownloadAndPinBeforeLeaseRelease() throws Exception {
         ExecutorService io = Executors.newSingleThreadExecutor();
         try {

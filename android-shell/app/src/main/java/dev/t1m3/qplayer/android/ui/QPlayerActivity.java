@@ -92,6 +92,7 @@ public final class QPlayerActivity extends Activity {
     private PlayerController controller;
     private SettingsCore settings;
     private QmlGLSurfaceView glView;
+    private PlayerOrientationController playerOrientation;
     private MetadataReader reader;
     private android.os.Handler mainHandler;
     private AndroidWebAuthScript webAuthScript;
@@ -119,6 +120,7 @@ public final class QPlayerActivity extends Activity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        playerOrientation = new PlayerOrientationController(this);
         if ("dev.t1m3.qplayer.INSTALL_UPDATE".equals(getIntent().getAction()))
             UpdateDownloads.requestInstall(getApplicationContext());
         logSceneLifecycle("create");
@@ -137,6 +139,11 @@ public final class QPlayerActivity extends Activity {
         splashView.post(this::startEngine);
     }
 
+    private void updatePlayerOrientation() {
+        if (playerOrientation != null) playerOrientation.setWanted(controller != null && settings != null
+                && Boolean.TRUE.equals(controller.lyricsOpen.peek()) && settings.bool(SettingsCatalog.AUTO_ROTATE_KEY));
+    }
+
     private void startEngine() {
         if (destroyed || isFinishing() || isDestroyed() || glView != null) return;
         Context app = getApplicationContext();
@@ -153,6 +160,7 @@ public final class QPlayerActivity extends Activity {
                                 app.getPackageManager().getPackageInfo(app.getPackageName(), 0).versionName);
                     } catch (PackageManager.NameNotFoundException ignored) {
                     }
+                    dev.t1m3.qplayer.plugin.BundledSourcePlugins.install();
                     initializeLyricFonts(app);
                     return new PlayerController(new AndroidAudioBackend(app), new AndroidMetadataReader(app));
                 }, ENGINE_IO);
@@ -282,7 +290,7 @@ public final class QPlayerActivity extends Activity {
         // portrait too (a dedicated immersive surface). Fires off the render thread, so
         // hop to the main thread before touching the window.
         lyricsOpenListener = open -> {
-            runOnUiThread(QPlayerActivity.this::updateImmersive);
+            runOnUiThread(() -> { updateImmersive(); updatePlayerOrientation(); });
         };
         // Property listener lists are owned by the QML runtime lock (see QmlGLSurfaceView).
         synchronized (dev.t1m3.qplayer.qml.QmlRuntimeLock.MONITOR) {
@@ -295,6 +303,8 @@ public final class QPlayerActivity extends Activity {
         // own rows need.
         // Settings were loaded on ENGINE_IO before any scene existed.
         settings.setFontPicker(this::pickFontFile);
+        registerSettingsHook(SettingsCatalog.AUTO_ROTATE_KEY, value -> runOnUiThread(this::updatePlayerOrientation));
+        updatePlayerOrientation();
         systemBarsListener = dark ->
                 runOnUiThread(() -> applySystemBars(Boolean.TRUE.equals(dark)));
         synchronized (dev.t1m3.qplayer.qml.QmlRuntimeLock.MONITOR) {
@@ -1155,6 +1165,7 @@ public final class QPlayerActivity extends Activity {
     @Override
     protected void onPause() {
         super.onPause();
+        if (playerOrientation != null) playerOrientation.pause();
         if (glView != null) glView.onPause();
         updateUiResumed = false;
         updateHandler.removeCallbacks(updatePoll);
@@ -1163,6 +1174,7 @@ public final class QPlayerActivity extends Activity {
     @Override
     protected void onResume() {
         super.onResume();
+        if (playerOrientation != null) playerOrientation.resume();
         updateUiResumed = true;
         updateHandler.removeCallbacks(updatePoll);
         updateHandler.post(updatePoll);
@@ -1213,6 +1225,7 @@ public final class QPlayerActivity extends Activity {
     protected void onDestroy() {
         logSceneLifecycle("destroy");
         destroyed = true;
+        if (playerOrientation != null) playerOrientation.close();
         updateUiResumed = false;
         updateHandler.removeCallbacks(updatePoll);
         boolean ownsUi = boundUiToken == uiToken;

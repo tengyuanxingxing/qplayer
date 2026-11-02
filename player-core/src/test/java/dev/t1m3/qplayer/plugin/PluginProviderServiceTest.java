@@ -20,6 +20,27 @@ import static org.junit.Assert.assertThrows;
 
 public final class PluginProviderServiceTest {
 
+    @Test public void onlyProviderMarkedFavoritePlaylistsGetTheCompactCollectionView() throws Exception {
+        Map<String,Object> dto=named("9","喜欢的音乐");
+        dto.put("favoriteSongs",true);
+        org.junit.Assert.assertTrue(parsePlaylist(dto).favoriteSongs);
+        dto.remove("favoriteSongs");
+        org.junit.Assert.assertFalse("a title alone is not proof of system favorites",parsePlaylist(dto).favoriteSongs);
+    }
+
+    @Test public void favoriteAlbumPagesKeepProviderIdentityAndServerCursor() throws Exception {
+        PluginProviderService service=new PluginProviderService(null,null);
+        Method method=PluginProviderService.class.getDeclaredMethod("parseAlbumPage",String.class,Object.class);
+        method.setAccessible(true);
+        Map<String,Object> raw=new LinkedHashMap<>();
+        raw.put("items",Collections.singletonList(named("42","同名专辑")));raw.put("nextCursor","100");
+        Page<?> qq=(Page<?>)method.invoke(service,"qq",raw);
+        Page<?> ne=(Page<?>)method.invoke(service,"netease",raw);
+        assertEquals("qq:album:42",((dev.t1m3.qplayer.media.Album)qq.items.get(0)).id);
+        assertEquals("netease:album:42",((dev.t1m3.qplayer.media.Album)ne.items.get(0)).id);
+        assertEquals("100",qq.nextCursor);
+    }
+
     private static Map<String, Object> named(String id, String name) {
         Map<String, Object> value = new LinkedHashMap<>();
         value.put("id", id);

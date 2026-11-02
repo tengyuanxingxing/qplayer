@@ -276,9 +276,13 @@ public final class DiskCache {
 
     public boolean deleteAudio(String mediaId) {
         String path = getAudioWithoutTouch(mediaId);
-        if (path == null) return false;
-        boolean deleted = new File(path).delete();
+        boolean deleted = path != null && new File(path).delete();
         if (deleted) unmarkActivelyCachedKey(fileStem(path));
+        if (mediaId != null && !mediaId.contains("|quality=")) {
+            for (String quality : new String[]{"lossless", "exhigh", "standard"}) {
+                deleted = deleteAudio(mediaId + "|quality=" + quality) || deleted;
+            }
+        }
         return deleted;
     }
 
@@ -314,7 +318,13 @@ public final class DiskCache {
 
 
     public boolean isActivelyCached(String mediaId) {
-        return activelyCachedIds.contains(audioKey(mediaId));
+        if (activelyCachedIds.contains(audioKey(mediaId))) return true;
+        if (mediaId != null && !mediaId.contains("|quality=")) {
+            for (String quality : new String[]{"lossless", "exhigh", "standard"}) {
+                if (activelyCachedIds.contains(audioKey(mediaId + "|quality=" + quality))) return true;
+            }
+        }
+        return false;
     }
 
     /** Mark a song as user-actively-cached (protects it from {@link #evictIfNeeded}).
@@ -640,6 +650,12 @@ public final class DiskCache {
                 }
             }
         } catch (IllegalArgumentException ignored) {
+        }
+        if (mediaId != null && !mediaId.contains("|quality=")) {
+            for (String quality : new String[]{"lossless", "exhigh", "standard"}) {
+                String variant = audioPath(mediaId + "|quality=" + quality);
+                if (variant != null && new File(variant).isFile()) return variant;
+            }
         }
         return null;
     }

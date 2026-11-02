@@ -23,9 +23,9 @@ function plugin(respond) {
 test('QQ home returns playable personal-radio tracks using the QQ account, independently of playlist failures',async()=>{
   const p=plugin(body=>{
     if(!body.guess)throw Error('playlist endpoint offline');
-    assert.equal(body.comm.ct,11);
+    assert.equal(body.comm.ct,19);assert.equal(body.comm.cv,0);
     assert.equal(body.guess.module,'music.radioProxy.MbTrackRadioSvr');
-    assert.equal(body.guess.method,'get_radio_track');assert.equal(body.guess.param.id,99);
+    assert.equal(body.guess.method,'get_radio_track');assert.deepEqual(Object.keys(body.guess.param),[]);
     return {guess:{code:0,data:{tracks:[{track_info:{mid:'mid-1',title:'推荐歌曲',singer:[{mid:'artist-mid',name:'歌手'}],album:{pmid:'art'},interval:180}},{mid:'mid-1'},{id:123}]}}};
   });
   const result=await p.home({limit:12});
@@ -43,9 +43,8 @@ test('radio recommendations fill ten three-row groups even when the service caps
   let calls=0;
   const p=plugin(body=>{
     if(!body.guess)throw Error('playlist endpoint offline');
-    const excluded=body.guess.param.song_ids;
-    assert.equal(excluded.length,calls*5);
-    assert.equal(body.guess.param.num,30);
+    assert.equal(body.comm.ct,19);
+    assert.deepEqual(Object.keys(body.guess.param),[]);
     const start=calls++*5;
     return {guess:{code:0,data:{tracks:Array.from({length:5},(_,i)=>({track_info:{mid:'r'+(start+i),id:start+i+1,title:'Radio '+(start+i)}}))}}};
   });
@@ -60,7 +59,7 @@ test('repeated batches stop without padding duplicates; later network failures p
     if(!body.guess)throw Error('playlist endpoint offline');calls++;
     return {guess:{data:{tracks:[{mid:'same',title:'one real song'}]}}};
   });
-  assert.equal((await p.home({limit:12})).songs.length,1);assert.equal(calls,2);
+  assert.equal((await p.home({limit:12})).songs.length,1);assert.equal(calls,3);
   let attempts=0;
   const broken=plugin(body=>{
     if(!body.guess || attempts++>0)throw Error('network failed');
@@ -94,4 +93,42 @@ test('uncached QQ metadata never sends more than ten modules per request',async(
   });
   const mids=Array.from({length:118},(_,i)=>'m'+i);const songs=await p.songDetails({ids:mids});
   assert.equal(songs.length,118);assert.equal(sizes.length,12);assert.equal(sizes.at(-1),8);
+});
+
+// Regression: the obsolete station preview must never be the request we send.
+test('fixed five-track station preview is replaced by authenticated stateful account feed',async()=>{
+  let calls=0;
+  const p=plugin(body=>{
+    if(!body.guess)throw Error('no playlists');
+    if(body.comm.ct===11 || body.guess.param.id===99)
+      return {guess:{data:{tracks:Array.from({length:5},(_,i)=>({mid:'preview'+i}))}}};
+    const batch=calls++; const start=(batch===1?0:batch===0?0:batch-1)*5;
+    return {guess:{data:{track:Array.from({length:5},(_,i)=>({mid:'account'+(start+i),title:'personal'}))}}};
+  });
+  const songs=(await p.home({})).songs;
+  assert.equal(songs.length,30);assert.equal(new Set(songs.map(s=>s.id)).size,30);
+  assert.equal(calls,7);assert.ok(songs.every(s=>s.id.startsWith('account')));
+});
+
+test('QQ QR GET omits optional body even through JSON bridge serialization',async()=>{
+  const context=vm.createContext({module:{exports:{}},require:()=>({}),qplayer:{call:async(method,args)=>{
+    assert.equal(method,'http.request');const wire=JSON.parse(JSON.stringify(args));
+    assert.equal(wire.method,'GET');assert.equal(Object.hasOwn(wire,'body'),false);
+    return {status:200,body:'fixture'};
+  }}});
+  vm.runInContext(fs.readFileSync(__dirname+'/qqmusic/src/main.js','utf8'),context);
+  const result=await context.httpRaw('GET','https://ssl.ptlogin2.qq.com/ptqrshow',{});
+  assert.equal(result.status,200);
+});
+
+test('QQ authorization preserves the encrypted account id required by album collections',async()=>{
+  let cookies;
+  const context=vm.createContext({module:{exports:{}},require:()=>({}),qplayer:{call:async(method,args)=>{
+    if(method==='http.request')return {status:200,body:JSON.stringify({req_1:{data:{musicid:123,musickey:'fixture',encryptUin:'encrypted-account'}}})};
+    if(method==='credentials.put'){if(args.key==='cookies')cookies=JSON.parse(args.value);return true;}
+    throw Error('unexpected '+method);
+  }}});
+  vm.runInContext(fs.readFileSync(__dirname+'/qqmusic/src/main.js','utf8'),context);
+  const profile=await context.qqExchangeCode('fixture-code');
+  assert.equal(profile.loggedIn,true);assert.equal(cookies.euin,'encrypted-account');
 });

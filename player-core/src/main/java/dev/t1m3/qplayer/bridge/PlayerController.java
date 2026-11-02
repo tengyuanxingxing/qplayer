@@ -382,6 +382,9 @@ public final class PlayerController {
     // playAt() call, same one-shot pattern as pendingResumeMs/-Index above.
     private volatile boolean pendingNaturalEnd = false;
     private volatile String playLevel = "exhigh";
+    public final Property<Integer> playbackQuality = new Property<>(1);
+    public final Property<String> playbackQualityStatus = new Property<>("优先 HQ 高品质");
+    private long qualitySwitchGeneration;
     // --- Volume fade in/out (Settings toggle) ------------------------------
     // Drives backend.setVolume() directly, never the public volume Property/
     // setVolume(float) (those are the user's own slider — a fade must not
@@ -924,6 +927,67 @@ public final class PlayerController {
             catch (Exception ignored) {}
             publishUnifiedFavorites();
         }
+    }
+
+    public final Property<List<Album>> favoriteAlbums = new Property<>(Collections.<Album>emptyList());
+    public final Property<Boolean> favoriteAlbumsLoading = new Property<>(false);
+    public final Property<String> favoriteAlbumsStatus = new Property<>("");
+    private final AtomicLong favoriteAlbumsGeneration = new AtomicLong();
+
+    public boolean isFavoritesPlaylist(String key) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            if (key == null || key.isEmpty()) return false;
+            if (UnifiedFavorites.ID.equals(key)) return true;
+            for (List<Playlist> slice : myPlaylistsBySource.values())
+                for (Playlist item : slice) if (key.equals(item.id)) return item.favoriteSongs;
+            return false;
+        }
+    }
+
+    /** Read only the albums actually saved by the account; keep provider identities distinct. */
+    public void refreshFavoriteAlbums() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            final long generation=favoriteAlbumsGeneration.incrementAndGet();
+            final String playlistKey=openSourcePlaylistId.peek();
+            final String source=UnifiedFavorites.ID.equals(playlistKey) ? unifiedFavoritesSource.peek()
+                    : (playlistKey.indexOf(':')>0?playlistKey.substring(0,playlistKey.indexOf(':')):"");
+            favoriteAlbums.set(Collections.<Album>emptyList());
+            final Map<String,List<Album>> slices=new LinkedHashMap<>();
+            final List<String> messages=new ArrayList<>();
+            final List<PluginManifest> providers=new ArrayList<>();
+            for(PluginManifest manifest:pluginManager.enabledProviders())
+                if((source.isEmpty() || source.equals(manifest.id)) && providerLoggedIn(manifest.id)
+                        && manifest.capabilitySet().contains(ProviderCapability.FAVORITE_ALBUMS)) providers.add(manifest);
+            favoriteAlbumsLoading.set(!providers.isEmpty());
+            favoriteAlbumsStatus.set(providers.isEmpty()?"请登录支持收藏专辑的音源":"正在加载收藏专辑…");
+            final int[] pending={providers.size()};
+            for(PluginManifest manifest:providers) {
+                slices.put(manifest.id,Collections.<Album>emptyList());
+                collectFavoriteAlbums(manifest.id,"",new LinkedHashMap<String,Album>(),new HashSet<String>(),0)
+                    .whenComplete((albums,error)->post(()->{
+                        if(generation!=favoriteAlbumsGeneration.get() || !playlistKey.equals(openSourcePlaylistId.peek()))return;
+                        if(error!=null)messages.add(manifest.name+"：加载失败，请检查登录后重试");
+                        else if(providerLoggedIn(manifest.id))slices.put(manifest.id,albums);
+                        List<Album> all=new ArrayList<>();for(List<Album> slice:slices.values())all.addAll(slice);
+                        favoriteAlbums.set(Collections.unmodifiableList(all));
+                        if(--pending[0]==0) {
+                            favoriteAlbumsLoading.set(false);
+                            favoriteAlbumsStatus.set(messages.isEmpty()?(all.isEmpty()?"暂无收藏专辑":""):String.join("\n",messages));
+                        }
+                    }));
+            }
+        }
+    }
+
+    private CompletableFuture<List<Album>> collectFavoriteAlbums(String provider,String cursor,
+            LinkedHashMap<String,Album> found,Set<String> cursors,int pages) {
+        return pluginProviders.favoriteAlbums(provider,cursor).thenCompose(page->{
+            int before=found.size();for(Album album:page.items)found.put(album.id,album);
+            String next=page.nextCursor;
+            if(next!=null && !next.isEmpty() && found.size()>before && pages<99 && cursors.add(next))
+                return collectFavoriteAlbums(provider,next,found,cursors,pages+1);
+            return CompletableFuture.completedFuture(new ArrayList<>(found.values()));
+        });
     }
 
     public void setUnifiedFavoritesSource(String provider) {
@@ -3460,8 +3524,8 @@ public final class PlayerController {
         String pending;
         String complete;
         if (t.source == Track.Source.PLUGIN) {
-            pending = diskCache.audioPendingPath(t.canonicalId());
-            complete = diskCache.audioPath(t.canonicalId());
+            pending = diskCache.audioPendingPath(t.audioCacheId());
+            complete = diskCache.audioPath(t.audioCacheId());
         } else if (t.source == Track.Source.NETEASE && t.neteaseId != 0) {
             pending = diskCache.audioPendingPath(t.neteaseId);
             complete = diskCache.audioPath(t.neteaseId);
@@ -4454,6 +4518,8 @@ public final class PlayerController {
         t.source = src.source;
         t.mediaId = src.mediaId;
         t.renditionId = src.renditionId;
+        t.streamQuality = src.streamQuality;
+        t.streamMimeType = src.streamMimeType;
         t.filePath = src.filePath;
         t.contentUri = src.contentUri;
         t.neteaseId = src.neteaseId;
@@ -6794,6 +6860,70 @@ public final class PlayerController {
         }
     }
 
+    public boolean canSelectPlaybackQuality() {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            Track track = currentTrack();
+            if (track == null || track.source == Track.Source.LOCAL) return false;
+            try {
+                String provider = MediaId.parse(track.canonicalId()).provider();
+                return "qq".equals(provider) || "netease".equals(provider);
+            } catch (IllegalArgumentException ignored) { return false; }
+        }
+    }
+
+    private static String qualityStatus(StreamDescriptor stream) {
+        return qualityStatus(stream.mimeType);
+    }
+
+    private static String qualityStatus(String mimeType) {
+        String mime = orEmpty(mimeType).toLowerCase(java.util.Locale.ROOT);
+        if (mime.contains("flac")) return "当前接口返回 FLAC 音频";
+        if (mime.contains("mpeg") || mime.contains("mp3")) return "当前接口返回 MP3；无损不可用时可能降档";
+        return "音质按账号与曲目支持返回；实际音质未确认";
+    }
+
+    public void setPlaybackQuality(int selected) {
+        synchronized (QmlRuntimeLock.MONITOR) {
+            int next = Math.max(0,Math.min(2,selected));
+            String level = new String[]{"standard","exhigh","lossless"}[next];
+            playbackQuality.set(next);
+            Track track = currentTrack();
+            if (level.equals(playLevel) && (track == null || level.equals(track.streamQuality))) return;
+            playLevel = level;
+            long generation = ++qualitySwitchGeneration;
+            if (track == null || needsReplay || !canSelectPlaybackQuality()) return;
+            long request = playbackSession.request();
+            playbackQualityStatus.set("正在切换音质…");
+            pluginProviders.resolveStream(MediaId.parse(track.canonicalId()),level).whenComplete((stream,error) ->
+                    onMain(() -> completePlaybackQuality(generation, request, track, level, stream, error)));
+        }
+    }
+
+    private void completePlaybackQuality(long generation, long request, Track track, String level,
+                                         StreamDescriptor stream, Throwable error) {
+        if (generation != qualitySwitchGeneration || !playbackSession.accepts(request,track)
+                || !level.equals(playLevel)) return;
+        if (error != null || stream == null || stream.url == null || stream.url.isEmpty()) {
+            playbackQualityStatus.set("切换失败，保留原播放；可检查账号权限后重试");
+            showToast("音质切换失败，保留原播放");
+            return;
+        }
+        long actualPosition = backend.position();
+        long resume = playbackSession.resolving ? playbackSession.startPositionMs
+                : actualPosition >= 0 ? actualPosition : positionMs.peek();
+        playbackSession.invalidate();
+        track.streamQuality = level;track.streamMimeType = stream.mimeType;
+        track.streamUrl = stream.url;track.streamHeaders.clear();track.streamHeaders.putAll(stream.headers);
+        track.streamExpiresAtMs = stream.expiresAtMs;track.streamCacheable = stream.cacheable;
+        track.trial = stream.trial;track.renditionId = stream.renditionId;
+        diskCache.setCurrentlyPlaying(track.audioCacheId());
+        playbackSession.startPositionMs = resume;
+        playBackend(stream.url,stream.headers,resume);
+        if (!playbackSession.playing) backend.pause();
+        playbackQualityStatus.set(qualityStatus(stream));
+        notifyPlayback();cachePluginAudioAfterStart(track);
+    }
+
     public void setPlayLevel(String level) {
         synchronized (QmlRuntimeLock.MONITOR) {
             if (level != null && !level.isEmpty()) playLevel = level;
@@ -6933,11 +7063,18 @@ public final class PlayerController {
     }
 
     private void preparePluginPlayback(Track track, boolean keepLyrics, long coverRevision) {
+        if (!playLevel.equals(track.streamQuality)) {
+            track.streamUrl = null;
+            track.streamQuality = playLevel;
+            track.streamMimeType = "";
+        }
+        diskCache.setCurrentlyPlaying(track.audioCacheId());
+        playbackQualityStatus.set("正在获取所选音质…");
         playbackSession.resolving = true;
         long request = playbackSession.request();
         ioWorker.submit(
                 () -> {
-                    String cached = diskCache.getAudio(track.canonicalId());
+                    String cached = diskCache.getAudio(track.audioCacheId());
                     onMain(
                             () -> {
                                 if (!playbackSession.accepts(request, track)) return;
@@ -6949,13 +7086,17 @@ public final class PlayerController {
                                     return;
                                 }
                                 playbackSession.resolving = false;
-                                if (cached != null)
+                                if (cached != null) {
+                                    playbackQualityStatus.set("使用缓存音频；实际音质未确认");
                                     playBackend(cached, playbackSession.startPositionMs);
-                                else
+                                }
+                                else {
+                                    playbackQualityStatus.set(qualityStatus(track.streamMimeType));
                                     playBackend(
                                             track.playable(),
                                             track.streamHeaders,
                                             playbackSession.startPositionMs);
+                                }
                                 if (!playbackSession.playing) backend.pause();
                                 playing.set(playbackSession.playing);
                                 if (!keepLyrics) loadPluginLyrics(track);
@@ -6979,8 +7120,9 @@ public final class PlayerController {
         }
         playbackSession.resolving = true;
         final long request = playbackSession.request();
+        final String requestedQuality = playLevel;
         pluginProviders
-                .resolveStream(id, playLevel)
+                .resolveStream(id, requestedQuality)
                 .whenComplete(
                         (stream, error) ->
                                 onMain(
@@ -6991,7 +7133,7 @@ public final class PlayerController {
                                                         id,
                                                         stream,
                                                         error,
-                                                        expectedCoverRevision)));
+                                                        expectedCoverRevision, requestedQuality)));
     }
 
     private void completePluginResolution(
@@ -7000,7 +7142,7 @@ public final class PlayerController {
             MediaId id,
             StreamDescriptor stream,
             Throwable error,
-            long expectedCoverRevision) {
+            long expectedCoverRevision, String requestedQuality) {
         if (!playbackSession.accepts(request, track)) return;
         playbackSession.resolving = false;
         if (error != null || stream == null || stream.url == null || stream.url.isEmpty()) {
@@ -7011,6 +7153,9 @@ public final class PlayerController {
             skipUnplayable(track, I18n.tr("toast.play.pluginStreamFailed"));
             return;
         }
+        track.streamQuality = requestedQuality;
+        track.streamMimeType = stream.mimeType;
+        playbackQualityStatus.set(qualityStatus(stream));
         track.streamUrl = stream.url;
         track.streamHeaders.clear();
         track.streamHeaders.putAll(stream.headers);
@@ -7083,6 +7228,7 @@ public final class PlayerController {
             return CompletableFuture.completedFuture(Boolean.FALSE);
         }
         Track request = copyForQueue(track);
+        if (orEmpty(request.streamQuality).isEmpty()) request.streamQuality = playLevel;
         if (hasFreshPluginStream(track)) {
             request.streamUrl = track.streamUrl;
             request.streamHeaders.putAll(track.streamHeaders);
@@ -7126,7 +7272,7 @@ public final class PlayerController {
             known.cacheable = track.streamCacheable;
             stream = CompletableFuture.completedFuture(known);
         } else {
-            stream = pluginProviders.resolveStream(id, playLevel);
+            stream = pluginProviders.resolveStream(id, orEmpty(track.streamQuality).isEmpty() ? playLevel : track.streamQuality);
         }
         return stream.thenCompose(
                 resolved -> {
@@ -10620,6 +10766,12 @@ public final class PlayerController {
     /** 我的 and the liked hearts keep the other sources' data after one source
      *  signs out; only the leaving source's own slice goes away. */
     private void dropSourceUserData(String providerId) {
+        favoriteAlbumsGeneration.incrementAndGet();
+        List<Album> remainingAlbums=new ArrayList<>();
+        for(Album album:favoriteAlbums.peek())if(!album.id.startsWith(providerId+":"))remainingAlbums.add(album);
+        favoriteAlbums.set(Collections.unmodifiableList(remainingAlbums));
+        favoriteAlbumsLoading.set(false);
+        favoriteAlbumsStatus.set(remainingAlbums.isEmpty()?"请登录后刷新收藏专辑":"");
         favoritesGeneration.incrementAndGet();
         favoritesBySource.remove(providerId);
         favoriteAccountIds.remove(providerId);reloadFavoriteMix();

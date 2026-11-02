@@ -751,12 +751,7 @@ public final class LyricCompositor {
         }
         int bgClip = canvas.save();
         canvas.clipRect(backdropClipRect);
-        if (!landscape) {
-            drawPortraitBackdrop(canvas, controller.coverSeed.peek(), coverOnly, w, h);
-        } else {
-            fluidBg.render(canvas, ctx, uiScale, w, h, cover, lyCoverKey,
-                    System.nanoTime(), bgStatic, bgStyle, bgSaturation);
-        }
+        drawPortraitBackdrop(canvas, controller.coverSeed.peek(), coverOnly, w, h);
         canvas.restoreToCount(bgClip);
 
         // 2) the lyrics column. The title (top band) and transport (bottom band) are
