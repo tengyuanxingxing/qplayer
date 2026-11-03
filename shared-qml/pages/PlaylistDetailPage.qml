@@ -18,6 +18,8 @@ Rectangle {
     // previous playlist's scroll position doesn't carry over.
     property string playlistWatch: String(player.openSourcePlaylistId || player.openPlaylistId)
     onPlaylistWatchChanged: {
+        page.favoriteSearchOpen=false
+        favoriteSearch.reset()
         tracks.contentY = 0
         page.filterText = ""
         page.albumsTab = false
@@ -28,6 +30,12 @@ Rectangle {
     readonly property bool favorites: {
         var projection=player.myPlaylists
         return page.unified || player.isFavoritesPlaylist(player.openSourcePlaylistId)
+    }
+    property bool favoriteSearchOpen:false
+    function handleLocalBack() {
+        if(!page.favoriteSearchOpen)return false
+        page.favoriteSearchOpen=false
+        return true
     }
     property bool albumsTab:false
     onAlbumsTabChanged: {
@@ -205,6 +213,12 @@ Rectangle {
                 visible: page.canSelect && (!page.compactHeader || page.selectMode)
                 icon: page.selectMode ? "close" : "checklist"
                 onClicked: page.toggleSelectMode()
+            }
+            IconButton {
+                objectName:"favoriteSearchButton"
+                Layout.alignment:Qt.AlignVCenter
+                type:"standard";visible:page.favorites;icon:"search"
+                onClicked:{page.albumsTab=false;page.favoriteSearchOpen=true}
             }
             IconButton {
                 id: overflowButton
@@ -629,6 +643,15 @@ Rectangle {
             else player.deletePlaylist(player.openPlaylistId)
             page.back()
         }
+    }
+
+    FavoriteSongSearch {
+        id:favoriteSearch
+        anchors.fill:parent;z:30
+        visible:page.visible && page.favoriteSearchOpen
+        enabled:visible
+        bottomContentInset:page.bottomContentInset
+        onClose:page.favoriteSearchOpen=false
     }
 
 }

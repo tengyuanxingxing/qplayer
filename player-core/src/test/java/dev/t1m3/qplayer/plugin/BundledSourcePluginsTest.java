@@ -13,7 +13,7 @@ public class BundledSourcePluginsTest {
         Path profile=Files.createTempDirectory("bundled-sources-test");
         try {
             AppDirs.setBase(profile.toString());AppDirs.setCacheBase(profile.resolve("cache").toString());
-            PluginCompatibility.setHostVersion("2.0.0-custom");
+            PluginCompatibility.setHostVersion("2.0.1-custom");
             BundledSourcePlugins.install();
             PluginRegistry registry=new PluginRegistry();
             assertEquals(2,registry.entries().size());

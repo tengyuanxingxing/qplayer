@@ -10044,6 +10044,17 @@ public final class PlayerController {
         }
     }
 
+    /** Facets reflect the currently opened collection, without network requests or guessed tags. */
+    public List<Map<String, Object>> favoriteSongFilterGroups() {
+        return FavoriteSongFilters.groups(sourcePlaylistTracks.peek());
+    }
+
+    /** Keep original collection order and song identities so result playback addresses the right source. */
+    public List<Song> filterFavoriteSongs(String query, String artist, String genre,
+                                           String decade, String provider) {
+        return FavoriteSongFilters.filter(sourcePlaylistTracks.peek(), query, artist, genre, decade, provider);
+    }
+
     /** True while a reorder is on its way to the provider. */
     private boolean sourceOrderSaving;
     /** Set when a drag lands while the previous one is still in flight, so the

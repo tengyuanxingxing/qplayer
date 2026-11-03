@@ -210,6 +210,7 @@ Rectangle {
         }
         if (app.showLog)            { app.showLog = false; return; }
         if (app.currentOverlay === "settings" && settingsLoader.item && settingsLoader.item.handleBack()) return
+        if (app.currentOverlay === "detail" && detailLoader.item && detailLoader.item.handleLocalBack()) return
         if (app.navigationStack.length > 0) { app.popPage(); return; }
         if (app.page !== 0)         { app.switchTo(0); return; }
         // Android hosts move the task to the background; they do not finish it.
@@ -667,6 +668,7 @@ Rectangle {
             ManagedPageLoader {
                 pageManager: app
                 motion: rootPageMotion
+                id: detailLoader
                 routeType: "detail"
                 active: app.detailLoaded
                 sourceComponent: Component {
